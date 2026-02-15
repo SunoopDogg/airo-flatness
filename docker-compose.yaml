@@ -1,22 +1,22 @@
 services:
-  kkalssam-python-template:
+  airo-fitness:
     build:
       context: .
     image: python3.14.2:trixie-slim-uv
-    container_name: kkalssam-python-template
+    container_name: airo-fitness
     tty: true
     ipc: host
     environment:
       - DISPLAY=${DISPLAY:-host.docker.internal:0}
       - QT_X11_NO_MITSHM=1
     volumes:
-      - .:/root/kkalssam-python-template
+      - .:/root/airo-fitness
       - /tmp/.X11-unix:/tmp/.X11-unix
 
-  kkalssam-python-template-gpu:
+  airo-fitness-gpu:
     extends:
-      service: kkalssam-python-template
-    container_name: kkalssam-python-template-gpu
+      service: airo-fitness
+    container_name: airo-fitness-gpu
     deploy:
       resources:
         reservations:
