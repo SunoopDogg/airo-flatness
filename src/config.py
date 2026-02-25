@@ -51,6 +51,17 @@ class Config:
     # Chart
     chart_dpi: int = 150
 
+    # Figure tool
+    fig_roi_subsample: int = 500_000
+    fig_dpi: int = 300
+    fig_heatmap_target_grid: int = 100
+    fig_heatmap_min_points: int = 3
+    fig_delaunay_max_points: int = 500_000
+    fig_grid_resolution: int = 200
+    fig_z_exaggeration: float = 1.0
+    fig_cross_section_step_deg: int = 10
+    fig_roi_min_points: int = 100
+
     # Paths
     data_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data")
     results_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "results")
