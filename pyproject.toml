@@ -10,3 +10,6 @@ dependencies = [
     "scipy>=1.17.1",
     "matplotlib>=3.10",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
