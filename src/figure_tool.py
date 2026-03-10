@@ -54,6 +54,7 @@ def main() -> None:
     print(f"\n\nLoaded {data['sampled_vertices']:,} points in {time.time() - start:.1f}s")
 
     points = data["points"]
+    colors = data["colors"]
 
     # [3] ROI selection (with retry loop)
     while True:
@@ -80,6 +81,49 @@ def main() -> None:
         print(f"  Points in ROI: {n_roi:,}")
         break
 
+    # [3c] Create output directory (moved up from [4])
+    stem = filepath.stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = cfg.results_dir / f"{stem}_figure_{timestamp}"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nOutput directory: {save_dir}")
+
+    # [3d] ROI context views
+    print("\nGenerating ROI context views...")
+    from figure.roi_context import render_roi_context_2d, render_roi_context_3d
+    render_roi_context_2d(
+        points, roi, save_dir,
+        max_points=cfg.fig_roi_subsample,
+        seed=cfg.random_seed,
+        dpi=cfg.fig_dpi,
+    )
+    print("  Saved: roi_context_2d.png")
+    render_roi_context_3d(
+        points, roi, save_dir,
+        max_points=cfg.fig_roi_subsample,
+        seed=cfg.random_seed,
+        dpi=cfg.fig_dpi,
+    )
+    print("  Saved: roi_context_3d.png")
+
+    if colors is not None:
+        render_roi_context_2d(
+            points, roi, save_dir,
+            max_points=cfg.fig_roi_subsample,
+            seed=cfg.random_seed,
+            dpi=cfg.fig_dpi,
+            colors=colors,
+        )
+        print("  Saved: roi_context_2d_rgb.png")
+        render_roi_context_3d(
+            points, roi, save_dir,
+            max_points=cfg.fig_roi_subsample,
+            seed=cfg.random_seed,
+            dpi=cfg.fig_dpi,
+            colors=colors,
+        )
+        print("  Saved: roi_context_3d_rgb.png")
+
     # [3b] Z ROI selection (with retry loop)
     while True:
         print("\nSelect Z range on the histogram (drag to select, then close window).")
@@ -102,13 +146,6 @@ def main() -> None:
         break
 
     roi_points = z_filtered
-
-    # [4] Create output directory
-    stem = filepath.stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_dir = cfg.results_dir / f"{stem}_figure_{timestamp}"
-    save_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\nOutput directory: {save_dir}")
 
     # [5] Compute heatmap grid
     print("\nGenerating height deviation heatmap...")
