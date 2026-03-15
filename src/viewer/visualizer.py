@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 
+from utils import to_rgba
+
 VIEW_MODES = {
     1: "Full Point Cloud",
     2: "Floor Only",
@@ -20,6 +22,62 @@ VIEW_MODE_PREFIX = {
     3: "mode3_nonfloor",
     4: "mode4_highlighted",
 }
+
+
+def _add_point_cloud(
+    plotter: pv.Plotter,
+    pts: np.ndarray,
+    clr: np.ndarray | None,
+    point_size: float,
+) -> None:
+    """Add a point cloud to the plotter with RGBA or viridis coloring."""
+    cloud = pv.PolyData(pts)
+    if clr is not None:
+        cloud["RGBA"] = to_rgba(clr)
+        plotter.add_mesh(
+            cloud, scalars="RGBA", rgba=True,
+            point_size=point_size, render_points_as_spheres=True,
+        )
+    else:
+        plotter.add_mesh(
+            cloud, scalars=pts[:, 2], cmap="viridis",
+            point_size=point_size, render_points_as_spheres=True,
+        )
+
+
+def _select_points_for_mode(
+    mode: int,
+    points: np.ndarray,
+    colors: np.ndarray | None,
+    floor_mask: np.ndarray | None,
+    floor_highlight_color: tuple[float, float, float],
+    non_floor_gray: float,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Select points and colors for the given view mode.
+
+    Returns:
+        (pts, clr) tuple where clr may be None for viridis fallback.
+    """
+    if mode == 1 or floor_mask is None:
+        return points, colors
+
+    if mode == 2:
+        mask = floor_mask
+        return points[mask], colors[mask] if colors is not None else None
+
+    if mode == 3:
+        mask = ~floor_mask
+        return points[mask], colors[mask] if colors is not None else None
+
+    # mode == 4: highlighted floor
+    highlight = np.array(floor_highlight_color, dtype=np.float32)
+    if colors is not None:
+        clr = colors.copy()
+        clr[floor_mask] = highlight
+    else:
+        clr = np.full((len(points), 3), non_floor_gray, dtype=np.float32)
+        clr[floor_mask] = highlight
+    return points, clr
 
 
 def _set_camera_view(plotter: pv.Plotter, view_name: str) -> None:
@@ -41,6 +99,7 @@ def visualize_point_cloud(
     colors: np.ndarray | None = None,
     floor_mask: np.ndarray | None = None,
     floor_highlight_color: tuple[float, float, float] = (1.0, 0.2, 0.2),
+    non_floor_fallback_gray: float = 0.7,
     title: str = "Point Cloud Viewer",
     point_size: float = 1.0,
     results_dir: Path | None = None,
@@ -61,67 +120,11 @@ def visualize_point_cloud(
     def build_view(mode: int) -> None:
         """Clear and rebuild the scene for the given view mode."""
         plotter.clear()
-
-        if mode == 1 or floor_mask is None:
-            cloud = pv.PolyData(points)
-            if colors is not None:
-                rgba = np.empty((len(colors), 4), dtype=np.uint8)
-                rgba[:, :3] = (colors * 255).astype(np.uint8)
-                rgba[:, 3] = 255
-                cloud["RGBA"] = rgba
-                plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=True)
-            else:
-                plotter.add_mesh(cloud, scalars=points[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=True)
-
-        elif mode == 2:
-            floor_pts = points[floor_mask]
-            cloud = pv.PolyData(floor_pts)
-            if colors is not None:
-                floor_clr = colors[floor_mask]
-                rgba = np.empty((len(floor_clr), 4), dtype=np.uint8)
-                rgba[:, :3] = (floor_clr * 255).astype(np.uint8)
-                rgba[:, 3] = 255
-                cloud["RGBA"] = rgba
-                plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=True)
-            else:
-                plotter.add_mesh(cloud, scalars=floor_pts[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=True)
-
-        elif mode == 3:
-            inv_mask = ~floor_mask
-            nf_pts = points[inv_mask]
-            cloud = pv.PolyData(nf_pts)
-            if colors is not None:
-                nf_clr = colors[inv_mask]
-                rgba = np.empty((len(nf_clr), 4), dtype=np.uint8)
-                rgba[:, :3] = (nf_clr * 255).astype(np.uint8)
-                rgba[:, 3] = 255
-                cloud["RGBA"] = rgba
-                plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=True)
-            else:
-                plotter.add_mesh(cloud, scalars=nf_pts[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=True)
-
-        elif mode == 4:
-            cloud = pv.PolyData(points)
-            highlight = np.array(floor_highlight_color, dtype=np.float32)
-            if colors is not None:
-                clr = colors.copy()
-                clr[floor_mask] = highlight
-            else:
-                clr = np.full((len(points), 3), 0.7, dtype=np.float32)
-                clr[floor_mask] = highlight
-            rgba = np.empty((len(clr), 4), dtype=np.uint8)
-            rgba[:, :3] = (clr * 255).astype(np.uint8)
-            rgba[:, 3] = 255
-            cloud["RGBA"] = rgba
-            plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                             point_size=point_size, render_points_as_spheres=True)
-
+        pts, clr = _select_points_for_mode(
+            mode, points, colors, floor_mask,
+            floor_highlight_color, non_floor_fallback_gray,
+        )
+        _add_point_cloud(plotter, pts, clr, point_size)
         plotter.enable_eye_dome_lighting()
         plotter.add_axes()
         current_mode[0] = mode

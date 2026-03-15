@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from config import Config
 from .peak_detector import PeakInfo, detect_floor_peak
 
 
@@ -28,13 +29,13 @@ class FloorResult:
     stage_counts: StageFilterCounts
 
 
-def _apply_z_filter(points: np.ndarray, z_min: float, z_max: float) -> np.ndarray:
+def _create_z_mask(points: np.ndarray, z_min: float, z_max: float) -> np.ndarray:
     """Z-임계값으로 바닥 후보 마스크를 생성한다."""
     z = points[:, 2]
     return (z >= z_min) & (z <= z_max)
 
 
-def _refine_floor_mask(
+def _refine_by_intensity_color(
     z_mask: np.ndarray,
     colors: np.ndarray | None = None,
     intensity: np.ndarray | None = None,
@@ -73,37 +74,19 @@ def extract_floor(
     points: np.ndarray,
     colors: np.ndarray | None = None,
     intensity: np.ndarray | None = None,
-    num_bins: int = 200,
-    band_width: float | None = None,
-    width_multiplier: float = 5.0,
-    intensity_percentile: float = 25.0,
-    color_tolerance: float = 0.4,
-    color_std_threshold: float = 0.01,
-    prominence_ratio: float = 0.1,
-    min_peak_width: int = 3,
-    fallback_z_ratio: float = 0.2,
-    tilt_fwhm_threshold: float = 2.0,
-    tilt_width_multiplier: float = 1.0,
+    config: Config | None = None,
 ) -> FloorResult:
-    """3단계 하이브리드 파이프라인으로 바닥을 추출한다.
-
-    Stage 1: Z-히스토그램 피크 자동 검출
-    Stage 2: Z-임계값 필터링
-    Stage 3: Intensity/Color 정제
+    """3-stage hybrid pipeline for floor extraction.
 
     Args:
-        points: (N, 3) 포인트 좌표 배열
-        colors: (N, 3) RGB 색상 (0~1), None이면 색상 필터 스킵
-        intensity: (N,) Intensity, None이면 Intensity 필터 스킵
-        num_bins: 히스토그램 빈 수
-        band_width: 고정 반폭(m). None이면 FWHM 자동.
-        width_multiplier: FWHM 배율
-        intensity_percentile: Stage 3 intensity 하한 백분위수
-        color_tolerance: Stage 3 색상 유클리드 거리 허용 범위
-
-    Returns:
-        FloorResult with floor_mask, peak_info, statistics
+        points: (N, 3) point coordinates.
+        colors: (N, 3) RGB colors (0~1), None to skip color filter.
+        intensity: (N,) intensity values, None to skip intensity filter.
+        config: Config object with extraction parameters. Uses defaults if None.
     """
+    if config is None:
+        config = Config()
+
     if len(points) == 0:
         return FloorResult(
             floor_mask=np.array([], dtype=bool),
@@ -114,31 +97,30 @@ def extract_floor(
             stage_counts=StageFilterCounts(total=0, after_z_filter=0, after_refinement=0),
         )
 
-    # Stage 1: 피크 검출
+    # Stage 1: peak detection
     peak_info = detect_floor_peak(
         points[:, 2],
-        num_bins=num_bins,
-        band_width=band_width,
-        width_multiplier=width_multiplier,
-        prominence_ratio=prominence_ratio,
-        min_peak_width=min_peak_width,
-        fallback_z_ratio=fallback_z_ratio,
-        tilt_fwhm_threshold=tilt_fwhm_threshold,
-        tilt_width_multiplier=tilt_width_multiplier,
+        num_bins=config.num_bins,
+        width_multiplier=config.width_multiplier,
+        prominence_ratio=config.prominence_ratio,
+        min_peak_width=config.min_peak_width,
+        fallback_z_ratio=config.fallback_z_ratio,
+        tilt_fwhm_threshold=config.tilt_fwhm_threshold,
+        tilt_width_multiplier=config.tilt_width_multiplier,
     )
 
-    # Stage 2: Z-임계값 필터링
-    floor_mask = _apply_z_filter(points, peak_info.z_min, peak_info.z_max)
+    # Stage 2: Z-threshold filtering
+    floor_mask = _create_z_mask(points, peak_info.z_min, peak_info.z_max)
     after_z_filter_count = int(floor_mask.sum())
 
-    # Stage 3: Intensity/Color 정제
-    floor_mask = _refine_floor_mask(
+    # Stage 3: Intensity/Color refinement
+    floor_mask = _refine_by_intensity_color(
         floor_mask,
         colors=colors,
         intensity=intensity,
-        intensity_percentile=intensity_percentile,
-        color_tolerance=color_tolerance,
-        color_std_threshold=color_std_threshold,
+        intensity_percentile=config.intensity_percentile,
+        color_tolerance=config.color_tolerance,
+        color_std_threshold=config.color_std_threshold,
     )
 
     floor_count = int(floor_mask.sum())

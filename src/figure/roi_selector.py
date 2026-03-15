@@ -410,7 +410,7 @@ def select_z_roi(
     ax.set_ylabel("Point count")
     ax.set_title("Select Z Range (drag to select, close to confirm)")
 
-    _span = SpanSelector(
+    span_selector = SpanSelector(
         ax,
         on_select,
         direction="horizontal",

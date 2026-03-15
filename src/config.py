@@ -59,23 +59,8 @@ class Config:
     fig_delaunay_max_points: int = 500_000
     fig_grid_resolution: int = 200
     fig_z_exaggeration: float = 1.0
-    fig_cross_section_step_deg: int = 10
     fig_roi_min_points: int = 100
 
     # Paths
     data_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data")
     results_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "results")
-
-
-_config: Config | None = None
-
-
-def get_config() -> Config:
-    global _config
-    if _config is None:
-        _config = Config()
-    return _config
-
-
-# Alias matching task spec
-load_config = get_config

@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use("TkAgg")
 
 from config import Config
-from main import select_file, format_size
+from utils import create_progress_bar, select_file
 
 
 def main() -> None:
@@ -34,16 +34,7 @@ def main() -> None:
 
     # [2] Load points
     start = time.time()
-    bar_w = 40
-
-    def progress(current: int, total: int) -> None:
-        pct = current / total
-        filled = int(bar_w * pct)
-        bar = "\u2588" * filled + "\u2591" * (bar_w - filled)
-        elapsed = time.time() - start
-        eta = (elapsed / pct - elapsed) if pct > 0 else 0
-        print(f"\rLoading: [{bar}] {pct:6.1%} ETA: {eta:.0f}s  ", end="", flush=True)
-
+    progress = create_progress_bar(label="Loading")
     data = ply_loader.load_ply_sampled(
         filepath,
         max_points=cfg.max_points,

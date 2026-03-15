@@ -72,7 +72,7 @@ def load_ply_sampled(
     """
     header = read_ply_header(filepath)
     total = header["vertex_count"]
-    dt = header["np_dtype"]
+    vertex_dtype = header["np_dtype"]
     prop_names = [p["name"] for p in header["properties"]]
 
     sample_size = min(max_points, total)
@@ -108,11 +108,11 @@ def load_ply_sampled(
 
             if len(local_indices) == 0:
                 # 샘플이 없는 청크는 건너뛰기 (seek)
-                f.seek(dt.itemsize * (chunk_end - chunk_start), 1)
+                f.seek(vertex_dtype.itemsize * (chunk_end - chunk_start), 1)
             else:
                 # numpy로 청크 전체를 한번에 읽기 (C-speed)
                 chunk = np.frombuffer(
-                    f.read(dt.itemsize * (chunk_end - chunk_start)), dtype=dt
+                    f.read(vertex_dtype.itemsize * (chunk_end - chunk_start)), dtype=vertex_dtype
                 )
 
                 # 샘플 인덱스만 추출

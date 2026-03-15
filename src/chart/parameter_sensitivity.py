@@ -1,5 +1,6 @@
 """Chart 6: 파라미터 민감도 차트 — extract_floor 반복 실행 결과 시각화."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -7,83 +8,69 @@ import numpy as np
 
 from extractor.floor_extractor import extract_floor
 from config import Config
+from utils import subsample_points
 
 
 def create_parameter_sensitivity_chart(
     points: np.ndarray,
     colors: np.ndarray | None,
     intensity: np.ndarray | None,
-    width_multiplier: float,
-    color_tolerance: float,
-    intensity_percentile: float,
+    config: Config,
     save_path: Path,
-    width_multiplier_sweep: list[float] | None = None,
-    color_tolerance_sweep: list[float] | None = None,
-    intensity_percentile_sweep: list[float] | None = None,
-    max_subsample: int = 500_000,
     dpi: int = 150,
 ) -> dict:
     """3개 파라미터 민감도를 라인 차트로 시각화하고 PNG를 저장한다.
 
-    포인트가 많을 경우 최대 max_subsample로 서브샘플링하여 실행 시간을 줄인다.
+    포인트가 많을 경우 최대 config.sensitivity_max_subsample로 서브샘플링하여 실행 시간을 줄인다.
 
     Args:
         points: (N, 3) 포인트 좌표
         colors: (N, 3) RGB 색상, None 가능
         intensity: (N,) intensity, None 가능
-        width_multiplier: 현재 사용된 width_multiplier 값 (빨간 마커 표시)
-        color_tolerance: 현재 사용된 color_tolerance 값
-        intensity_percentile: 현재 사용된 intensity_percentile 값
+        config: Config 인스턴스
         save_path: 저장할 이미지 경로
-        width_multiplier_sweep: 스윕할 width_multiplier 값 목록 (None이면 Config 기본값)
-        color_tolerance_sweep: 스윕할 color_tolerance 값 목록 (None이면 Config 기본값)
-        intensity_percentile_sweep: 스윕할 intensity_percentile 값 목록 (None이면 Config 기본값)
-        max_subsample: 최대 서브샘플 포인트 수
+        dpi: 출력 이미지 DPI
 
     Returns:
         민감도 데이터 dict (report.json 용)
     """
-    cfg = Config()
-    if width_multiplier_sweep is None:
-        width_multiplier_sweep = cfg.width_multiplier_sweep
-    if color_tolerance_sweep is None:
-        color_tolerance_sweep = cfg.color_tolerance_sweep
-    if intensity_percentile_sweep is None:
-        intensity_percentile_sweep = cfg.intensity_percentile_sweep
-
     # 서브샘플링
     n = len(points)
-    if n > max_subsample:
-        idx = np.random.choice(n, max_subsample, replace=False)
-        pts = points[idx]
-        col = colors[idx] if colors is not None else None
-        itn = intensity[idx] if intensity is not None else None
+    if n > config.sensitivity_max_subsample:
+        if colors is not None and intensity is not None:
+            sub_points, sub_colors, sub_intensity = subsample_points(
+                points, config.sensitivity_max_subsample, config.random_seed, colors, intensity)
+        elif colors is not None:
+            sub_points, sub_colors = subsample_points(
+                points, config.sensitivity_max_subsample, config.random_seed, colors)
+            sub_intensity = None
+        elif intensity is not None:
+            sub_points, sub_intensity = subsample_points(
+                points, config.sensitivity_max_subsample, config.random_seed, intensity)
+            sub_colors = None
+        else:
+            sub_points, = subsample_points(points, config.sensitivity_max_subsample, config.random_seed)
+            sub_colors = None
+            sub_intensity = None
     else:
-        pts = points
-        col = colors
-        itn = intensity
+        sub_points = points
+        sub_colors = colors
+        sub_intensity = intensity
 
-    def sweep(param_name: str, values: list, base_kwargs: dict) -> list[float]:
+    def sweep(param_name: str, values: list) -> list[float]:
         ratios = []
         for v in values:
-            kwargs = dict(base_kwargs)
-            kwargs[param_name] = v
+            swept_config = replace(config, **{param_name: v})
             try:
-                result = extract_floor(pts, colors=col, intensity=itn, **kwargs)
+                result = extract_floor(sub_points, colors=sub_colors, intensity=sub_intensity, config=swept_config)
                 ratios.append(result.floor_ratio)
             except Exception:
                 ratios.append(float("nan"))
         return ratios
 
-    base = dict(
-        width_multiplier=width_multiplier,
-        color_tolerance=color_tolerance,
-        intensity_percentile=intensity_percentile,
-    )
-
-    wm_ratios = sweep("width_multiplier", width_multiplier_sweep, base)
-    ct_ratios = sweep("color_tolerance", color_tolerance_sweep, base)
-    ip_ratios = sweep("intensity_percentile", intensity_percentile_sweep, base)
+    wm_ratios = sweep("width_multiplier", config.width_multiplier_sweep)
+    ct_ratios = sweep("color_tolerance", config.color_tolerance_sweep)
+    ip_ratios = sweep("intensity_percentile", config.intensity_percentile_sweep)
 
     # 차트 그리기
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), dpi=dpi)
@@ -91,25 +78,25 @@ def create_parameter_sensitivity_chart(
 
     _plot_sensitivity_line(
         axes[0],
-        width_multiplier_sweep,
+        config.width_multiplier_sweep,
         wm_ratios,
-        width_multiplier,
+        config.width_multiplier,
         "Width Multiplier",
         "floor_ratio",
     )
     _plot_sensitivity_line(
         axes[1],
-        color_tolerance_sweep,
+        config.color_tolerance_sweep,
         ct_ratios,
-        color_tolerance,
+        config.color_tolerance,
         "Color Tolerance",
         "floor_ratio",
     )
     _plot_sensitivity_line(
         axes[2],
-        intensity_percentile_sweep,
+        config.intensity_percentile_sweep,
         ip_ratios,
-        intensity_percentile,
+        config.intensity_percentile,
         "Intensity Percentile",
         "floor_ratio",
     )
@@ -120,15 +107,15 @@ def create_parameter_sensitivity_chart(
 
     return {
         "width_multiplier": {
-            "values": width_multiplier_sweep,
+            "values": config.width_multiplier_sweep,
             "floor_ratios": wm_ratios,
         },
         "color_tolerance": {
-            "values": color_tolerance_sweep,
+            "values": config.color_tolerance_sweep,
             "floor_ratios": ct_ratios,
         },
         "intensity_percentile": {
-            "values": intensity_percentile_sweep,
+            "values": config.intensity_percentile_sweep,
             "floor_ratios": ip_ratios,
         },
     }
