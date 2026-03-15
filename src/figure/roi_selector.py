@@ -6,11 +6,65 @@ from matplotlib.widgets import SpanSelector
 from scipy.spatial import ConvexHull, QhullError
 
 
+def _minimum_bounding_rectangle(hull_points: np.ndarray) -> np.ndarray:
+    """ConvexHull 점들의 최소 면적 외접 직사각형 꼭짓점 반환.
+
+    Args:
+        hull_points: (N, 2) ConvexHull 꼭짓점 (CCW 순서).
+
+    Returns:
+        (4, 2) 직사각형 꼭짓점 (CCW 순서).
+    """
+    best_area = np.inf
+    best_rect = None
+
+    n = len(hull_points)
+    for i in range(n):
+        # edge 방향 각도
+        edge = hull_points[(i + 1) % n] - hull_points[i]
+        angle = np.arctan2(edge[1], edge[0])
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+
+        # R(angle) — edge 방향 회전 행렬
+        rot = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+
+        # -angle 회전으로 edge를 x축에 정렬: points @ rot.T = points @ R(-angle)
+        rotated = hull_points @ rot.T
+
+        # 축 정렬 바운딩 박스
+        x_min, y_min = rotated.min(axis=0)
+        x_max, y_max = rotated.max(axis=0)
+        area = (x_max - x_min) * (y_max - y_min)
+
+        if area < best_area:
+            best_area = area
+            # 바운딩 박스 꼭짓점 (회전된 좌표계)
+            box_rotated = np.array([
+                [x_min, y_min],
+                [x_max, y_min],
+                [x_max, y_max],
+                [x_min, y_max],
+            ])
+            # +angle 역회전으로 원래 좌표계 복원: box @ rot = box @ R(angle)
+            best_rect = box_rotated @ rot
+
+    # CCW 순서 보장 (signed area > 0)
+    v = best_rect
+    signed_area = 0.0
+    for i in range(4):
+        j = (i + 1) % 4
+        signed_area += v[i, 0] * v[j, 1] - v[j, 0] * v[i, 1]
+    if signed_area < 0:
+        best_rect = best_rect[::-1]
+
+    return best_rect
+
+
 class QuadROI:
-    """4개 꼭짓점으로 정의된 사각형 ROI (반시계방향 정렬)."""
+    """4개 꼭짓점으로 정의된 직사각형 ROI (최소 면적 외접 직사각형, 반시계방향 정렬)."""
 
     def __init__(self, points: np.ndarray) -> None:
-        """ConvexHull로 4점을 반시계방향 정렬.
+        """ConvexHull + MABR로 4점의 최소 면적 외접 직사각형 생성.
 
         Args:
             points: (4, 2) 꼭짓점 좌표 배열.
@@ -27,7 +81,8 @@ class QuadROI:
             raise ValueError("4점이 볼록 사각형을 이루지 않습니다.") from e
         if len(hull.vertices) != 4:
             raise ValueError("4점이 볼록 사각형을 이루지 않습니다.")
-        self.vertices: np.ndarray = points[hull.vertices]
+        hull_pts = points[hull.vertices]
+        self.vertices: np.ndarray = _minimum_bounding_rectangle(hull_pts)
 
     def to_axis_aligned(self) -> tuple[float, float, float, float]:
         """AABB 바운딩 박스 반환.
