@@ -58,7 +58,7 @@ def main() -> None:
 
     # [3] ROI selection (with retry loop)
     while True:
-        print("\nSelect ROI region on the top-view plot (click 4 points, then close window).")
+        print("\nSelect ROI region on the top-view plot (click 4 points, Q to apply).")
         try:
             roi = select_roi(
                 points,
