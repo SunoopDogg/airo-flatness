@@ -23,14 +23,14 @@ AXES_WIDGET_VIEWPORT = (0.08, 0.0, 0.22, 0.2)  # (xmin, ymin, xmax, ymax) normal
 
 def _clip_mesh_to_roi(
     mesh: pv.StructuredGrid,
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: QuadROI,
     z_range: tuple[float, float] | None = None,
 ) -> pv.PolyData | None:
     """Clip a surface mesh to the ROI polygon and Z range.
 
     Args:
         mesh: surface mesh to clip.
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
+        roi: QuadROI 객체.
         z_range: optional (z_min, z_max) for Z clipping.
             Falls back to mesh Z extent when None.
 
@@ -43,27 +43,16 @@ def _clip_mesh_to_roi(
         z_lo = float(mesh.points[:, 2].min())
         z_hi = float(mesh.points[:, 2].max())
 
-    if not isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi.to_axis_aligned()
-    else:
-        x_min, x_max, y_min, y_max = roi
+    x_min, x_max, y_min, y_max = roi.to_axis_aligned()
 
     surface = mesh.extract_surface()
     clipped = surface.clip_box(
         [x_min, x_max, y_min, y_max, z_lo, z_hi], invert=False,
     )
 
-    # For QuadROI, further clip to the actual polygon (not just AABB)
-    if not isinstance(roi, tuple) and clipped.n_cells > 0:
+    if clipped.n_cells > 0:
         centers = clipped.cell_centers().points[:, :2]
-        v = roi.vertices
-        mask = np.ones(len(centers), dtype=bool)
-        for i in range(4):
-            j = (i + 1) % 4
-            ex = v[j, 0] - v[i, 0]
-            ey = v[j, 1] - v[i, 1]
-            cross = ex * (centers[:, 1] - v[i, 1]) - ey * (centers[:, 0] - v[i, 0])
-            mask &= cross >= 0
+        mask = roi.contains(centers)
         cell_ids = np.where(mask)[0]
         if len(cell_ids) == 0:
             return None
@@ -131,28 +120,19 @@ def _build_dashed_segments(
 
 
 def _build_dashed_rectangle_2d(
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: QuadROI,
     z: float,
 ) -> pv.PolyData:
-    """Build a dashed 2D rectangle outline on the XY plane at given Z.
+    """Build a dashed 2D quadrilateral outline on the XY plane at given Z.
 
     Args:
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
-        z: Z coordinate for the rectangle.
+        roi: QuadROI 객체.
+        z: Z coordinate for the outline.
 
     Returns:
-        PyVista PolyData with dashed line cells forming a rectangle.
+        PyVista PolyData with dashed line cells forming a quadrilateral.
     """
-    if isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi
-        corners_2d = np.array([
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max],
-        ])
-    else:
-        corners_2d = roi.vertices
+    corners_2d = roi.vertices
     corners = np.column_stack([corners_2d, np.full(len(corners_2d), z)])
     all_points = []
     all_lines = []
@@ -168,30 +148,21 @@ def _build_dashed_rectangle_2d(
 
 
 def _build_dashed_box_3d(
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: QuadROI,
     z_min: float,
     z_max: float,
 ) -> pv.PolyData:
     """Build a dashed 3D wireframe box.
 
     Args:
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
+        roi: QuadROI 객체.
         z_min: bottom Z coordinate.
         z_max: top Z coordinate.
 
     Returns:
         PyVista PolyData with dashed line cells forming a box.
     """
-    if isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi
-        corners_2d = np.array([
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max],
-        ])
-    else:
-        corners_2d = roi.vertices
+    corners_2d = roi.vertices
     bottom = np.column_stack([corners_2d, np.full(4, z_min)])
     top = np.column_stack([corners_2d, np.full(4, z_max)])
     verts = np.vstack([bottom, top])
@@ -290,7 +261,7 @@ def _create_point_cloud_plotter(
 
 def render_roi_context_2d(
     points: np.ndarray,
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: QuadROI,
     save_dir: Path,
     max_points: int = 500_000,
     seed: int = 42,
@@ -307,7 +278,7 @@ def render_roi_context_2d(
 
     Args:
         points: (N, 3) full point cloud.
-        roi: (x_min, x_max, y_min, y_max) selected ROI bounds.
+        roi: QuadROI 객체.
         save_dir: directory to save the output image.
         max_points: subsample limit for rendering performance.
         seed: random seed for subsampling.
@@ -359,7 +330,7 @@ def render_roi_context_2d(
 
 def render_roi_context_3d(
     points: np.ndarray,
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: QuadROI,
     save_dir: Path,
     max_points: int = 500_000,
     seed: int = 42,
@@ -376,7 +347,7 @@ def render_roi_context_3d(
 
     Args:
         points: (N, 3) full point cloud.
-        roi: (x_min, x_max, y_min, y_max) selected ROI bounds.
+        roi: QuadROI 객체.
         save_dir: directory to save the output image.
         max_points: subsample limit for rendering performance.
         seed: random seed for subsampling.
