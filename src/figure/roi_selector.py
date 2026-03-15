@@ -2,7 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import RectangleSelector, SpanSelector
+from matplotlib.widgets import SpanSelector
 from scipy.spatial import ConvexHull, QhullError
 
 
@@ -85,19 +85,19 @@ def select_roi(
     points: np.ndarray,
     max_display: int = 500_000,
     seed: int = 42,
-) -> tuple[float, float, float, float]:
-    """Show top-view scatter and let user drag-select a rectangular ROI.
+) -> QuadROI:
+    """탑뷰 산점도에서 4개 점을 클릭하여 사각형 ROI 선택.
 
     Args:
-        points: (N, 3) point cloud array.
-        max_display: max points to display (subsampled for performance).
-        seed: random seed for subsampling.
+        points: (N, 3) 포인트 클라우드 배열.
+        max_display: 표시할 최대 점 수 (서브샘플링).
+        seed: 서브샘플링 시드.
 
     Returns:
-        (x_min, x_max, y_min, y_max) of selected region.
+        선택된 4점으로 구성된 QuadROI.
 
     Raises:
-        ValueError: if user closes window without selecting.
+        ValueError: 4점을 선택하지 않거나 볼록 사각형이 아닌 경우.
     """
     if len(points) > max_display:
         rng = np.random.default_rng(seed)
@@ -105,14 +105,6 @@ def select_roi(
         display_pts = points[idx]
     else:
         display_pts = points
-
-    roi_coords = {}
-
-    def on_select(eclick, erelease):
-        roi_coords["x_min"] = min(eclick.xdata, erelease.xdata)
-        roi_coords["x_max"] = max(eclick.xdata, erelease.xdata)
-        roi_coords["y_min"] = min(eclick.ydata, erelease.ydata)
-        roi_coords["y_max"] = max(eclick.ydata, erelease.ydata)
 
     fig, ax = plt.subplots(figsize=(10, 10))
     scatter = ax.scatter(
@@ -127,50 +119,32 @@ def select_roi(
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_aspect("equal")
-    ax.set_title("Drag to select ROI — close window when done")
-
-    rect_kwargs = dict(edgecolor="red", linestyle="--", linewidth=1.5, facecolor="none")
-    selector = RectangleSelector(
-        ax,
-        on_select,
-        useblit=True,
-        button=[1],
-        interactive=True,
-        props=rect_kwargs,
-    )
+    ax.set_title("Click 4 points to define ROI (right-click to undo, close to confirm)")
 
     plt.tight_layout()
-    plt.show()
+    clicked = plt.ginput(4, timeout=-1)
+    plt.close(fig)
 
-    if not roi_coords:
-        raise ValueError("No ROI selected.")
+    if len(clicked) < 4:
+        raise ValueError("4개의 점을 선택해야 합니다.")
 
-    return (
-        roi_coords["x_min"],
-        roi_coords["x_max"],
-        roi_coords["y_min"],
-        roi_coords["y_max"],
-    )
+    return QuadROI(np.array(clicked))
 
 
 def filter_points_by_roi(
     points: np.ndarray,
-    roi: tuple[float, float, float, float],
+    roi: QuadROI,
 ) -> np.ndarray:
-    """Filter points within the ROI bounding box (X-Y only).
+    """QuadROI 내부 점만 필터링 (X-Y 평면).
 
     Args:
-        points: (N, 3) array.
-        roi: (x_min, x_max, y_min, y_max).
+        points: (N, 3) 배열.
+        roi: QuadROI 객체.
 
     Returns:
-        (M, 3) array of points within ROI.
+        (M, 3) ROI 내부 점 배열.
     """
-    x_min, x_max, y_min, y_max = roi
-    mask = (
-        (points[:, 0] >= x_min) & (points[:, 0] <= x_max) &
-        (points[:, 1] >= y_min) & (points[:, 1] <= y_max)
-    )
+    mask = roi.contains(points[:, :2])
     return points[mask]
 
 
