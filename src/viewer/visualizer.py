@@ -70,10 +70,10 @@ def visualize_point_cloud(
                 rgba[:, 3] = 255
                 cloud["RGBA"] = rgba
                 plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
             else:
                 plotter.add_mesh(cloud, scalars=points[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
 
         elif mode == 2:
             floor_pts = points[floor_mask]
@@ -85,10 +85,10 @@ def visualize_point_cloud(
                 rgba[:, 3] = 255
                 cloud["RGBA"] = rgba
                 plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
             else:
                 plotter.add_mesh(cloud, scalars=floor_pts[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
 
         elif mode == 3:
             inv_mask = ~floor_mask
@@ -101,10 +101,10 @@ def visualize_point_cloud(
                 rgba[:, 3] = 255
                 cloud["RGBA"] = rgba
                 plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
             else:
                 plotter.add_mesh(cloud, scalars=nf_pts[:, 2], cmap="viridis",
-                                 point_size=point_size, render_points_as_spheres=False)
+                                 point_size=point_size, render_points_as_spheres=True)
 
         elif mode == 4:
             cloud = pv.PolyData(points)
@@ -120,7 +120,7 @@ def visualize_point_cloud(
             rgba[:, 3] = 255
             cloud["RGBA"] = rgba
             plotter.add_mesh(cloud, scalars="RGBA", rgba=True,
-                             point_size=point_size, render_points_as_spheres=False)
+                             point_size=point_size, render_points_as_spheres=True)
 
         plotter.enable_eye_dome_lighting()
         plotter.add_axes()

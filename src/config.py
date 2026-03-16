@@ -32,7 +32,7 @@ class Config:
     tilt_width_multiplier: float = 1.0
 
     # Viewer
-    point_size: float = 1.0
+    point_size: float = 2.0
     floor_highlight_color: tuple[float, float, float] = (1.0, 0.2, 0.2)
     non_floor_fallback_gray: float = 0.7
 
