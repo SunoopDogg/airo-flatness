@@ -77,7 +77,9 @@ def main() -> None:
                   f"(minimum: {cfg.fig_roi_min_points}). Please select a larger area.")
             continue
 
-        print(f"  ROI: X=[{roi[0]:.2f}, {roi[1]:.2f}] Y=[{roi[2]:.2f}, {roi[3]:.2f}]")
+        v = roi.vertices
+        print(f"  ROI vertices: ({v[0,0]:.2f},{v[0,1]:.2f}) ({v[1,0]:.2f},{v[1,1]:.2f}) "
+              f"({v[2,0]:.2f},{v[2,1]:.2f}) ({v[3,0]:.2f},{v[3,1]:.2f})")
         print(f"  Points in ROI: {n_roi:,}")
         break
 
@@ -87,42 +89,6 @@ def main() -> None:
     save_dir = cfg.results_dir / f"{stem}_figure_{timestamp}"
     save_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nOutput directory: {save_dir}")
-
-    # [3d] ROI context views
-    print("\nGenerating ROI context views...")
-    from figure.roi_context import render_roi_context_2d, render_roi_context_3d
-    render_roi_context_2d(
-        points, roi, save_dir,
-        max_points=cfg.fig_roi_subsample,
-        seed=cfg.random_seed,
-        dpi=cfg.fig_dpi,
-    )
-    print("  Saved: roi_context_2d.png")
-    render_roi_context_3d(
-        points, roi, save_dir,
-        max_points=cfg.fig_roi_subsample,
-        seed=cfg.random_seed,
-        dpi=cfg.fig_dpi,
-    )
-    print("  Saved: roi_context_3d.png")
-
-    if colors is not None:
-        render_roi_context_2d(
-            points, roi, save_dir,
-            max_points=cfg.fig_roi_subsample,
-            seed=cfg.random_seed,
-            dpi=cfg.fig_dpi,
-            colors=colors,
-        )
-        print("  Saved: roi_context_2d_rgb.png")
-        render_roi_context_3d(
-            points, roi, save_dir,
-            max_points=cfg.fig_roi_subsample,
-            seed=cfg.random_seed,
-            dpi=cfg.fig_dpi,
-            colors=colors,
-        )
-        print("  Saved: roi_context_3d_rgb.png")
 
     # [3b] Z ROI selection (with retry loop)
     while True:
@@ -185,6 +151,46 @@ def main() -> None:
         return
 
     print(f"  Mesh: {mesh.n_points:,} vertices, {mesh.n_cells:,} cells")
+
+    # [3d] ROI context views (rendered after mesh is built so RGB variants get mesh overlay)
+    print("\nGenerating ROI context views...")
+    from figure.roi_context import render_roi_context_2d, render_roi_context_3d
+    render_roi_context_2d(
+        points, roi, save_dir,
+        max_points=cfg.fig_roi_subsample,
+        seed=cfg.random_seed,
+        dpi=cfg.fig_dpi,
+    )
+    print("  Saved: roi_context_2d.png")
+    render_roi_context_3d(
+        points, roi, save_dir,
+        max_points=cfg.fig_roi_subsample,
+        seed=cfg.random_seed,
+        dpi=cfg.fig_dpi,
+    )
+    print("  Saved: roi_context_3d.png")
+
+    if colors is not None:
+        render_roi_context_2d(
+            points, roi, save_dir,
+            max_points=cfg.fig_roi_subsample,
+            seed=cfg.random_seed,
+            dpi=cfg.fig_dpi,
+            colors=colors,
+            mesh=mesh,
+            z_range=(z_min, z_max),
+        )
+        print("  Saved: roi_context_2d_rgb.png")
+        render_roi_context_3d(
+            points, roi, save_dir,
+            max_points=cfg.fig_roi_subsample,
+            seed=cfg.random_seed,
+            dpi=cfg.fig_dpi,
+            colors=colors,
+            mesh=mesh,
+            z_range=(z_min, z_max),
+        )
+        print("  Saved: roi_context_3d_rgb.png")
 
     print("\nLaunching 3D viewer...")
     print("  Keys: [S] capture, [I] isometric, [M] multi-view, [Q] quit")
