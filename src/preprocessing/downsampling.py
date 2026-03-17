@@ -15,7 +15,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import cupy as cp
-import cupyx
 
 
 # ---------------------------------------------------------------------------
@@ -150,21 +149,21 @@ def _accumulate_voxel_chunk(
     # --- Coordinate sums ---
     coord_sums = cp.zeros((n_voxels, 3), dtype=cp.float32)
     for ax in range(3):
-        cupyx.scatter_add(coord_sums[:, ax], inverse, points[:, ax])
+        cp.add.at(coord_sums[:, ax], inverse, points[:, ax])
 
     # --- Color sums ---
     colors_f = colors.astype(cp.float32)
     color_sums = cp.zeros((n_voxels, 3), dtype=cp.float32)
     for ax in range(3):
-        cupyx.scatter_add(color_sums[:, ax], inverse, colors_f[:, ax])
+        cp.add.at(color_sums[:, ax], inverse, colors_f[:, ax])
 
     # --- Intensity sums ---
     intensity_sums = cp.zeros(n_voxels, dtype=cp.float32)
-    cupyx.scatter_add(intensity_sums, inverse, intensity)
+    cp.add.at(intensity_sums, inverse, intensity)
 
     # --- Counts ---
     counts = cp.zeros(n_voxels, dtype=cp.float32)
-    cupyx.scatter_add(counts, inverse, cp.ones(len(points), dtype=cp.float32))
+    cp.add.at(counts, inverse, cp.ones(len(points), dtype=cp.float32))
 
     # --- Classification (raw values + inverse for later mode) ---
     return VoxelAccumulation(
@@ -215,10 +214,10 @@ def _merge_accumulations(accums: list[VoxelAccumulation]) -> VoxelAccumulation:
 
         # Scatter-add sums
         for ax in range(3):
-            cupyx.scatter_add(coord_sums[:, ax], local_to_merged, a.coord_sums[:, ax])
-            cupyx.scatter_add(color_sums[:, ax], local_to_merged, a.color_sums[:, ax])
-        cupyx.scatter_add(intensity_sums, local_to_merged, a.intensity_sums)
-        cupyx.scatter_add(counts, local_to_merged, a.counts)
+            cp.add.at(coord_sums[:, ax], local_to_merged, a.coord_sums[:, ax])
+            cp.add.at(color_sums[:, ax], local_to_merged, a.color_sums[:, ax])
+        cp.add.at(intensity_sums, local_to_merged, a.intensity_sums)
+        cp.add.at(counts, local_to_merged, a.counts)
 
         # Remap classification inverse indices through the merge mapping
         if len(a.classification_inv) > 0:
@@ -277,7 +276,7 @@ def _compute_mode_gpu(
         mask = (values == cls_val).astype(cp.float32)
         # Count occurrences of this class per voxel
         cls_count = cp.zeros(n_voxels, dtype=cp.float32)
-        cupyx.scatter_add(cls_count, inverse, mask)
+        cp.add.at(cls_count, inverse, mask)
         # Update best where this class has higher count
         better = cls_count > best_count
         best_count = cp.where(better, cls_count, best_count)
@@ -431,10 +430,17 @@ def downsample_gpu(
         )
     except cp.cuda.memory.OutOfMemoryError:
         print("    GPU OOM during downsampling — halving chunk size and retrying")
-        result = downsample_voxel_grid_gpu(
-            points, colors, intensity, classification,
-            voxel_size, gpu_chunk_size // 2,
-        )
+        try:
+            result = downsample_voxel_grid_gpu(
+                points, colors, intensity, classification,
+                voxel_size, gpu_chunk_size // 2,
+            )
+        except cp.cuda.memory.OutOfMemoryError:
+            raise RuntimeError(
+                f"GPU out of memory during downsampling even with reduced chunk size. "
+                f"Try reducing gpu_chunk_size further (tried: {gpu_chunk_size // 2:,}). "
+                f"Set Config.gpu_chunk_size to a smaller value."
+            )
 
     r_pts, r_cols, r_int, r_cls = result
 
