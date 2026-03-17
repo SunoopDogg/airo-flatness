@@ -13,6 +13,12 @@ class Config:
     random_seed: int = 42
     chunk_size: int = 1_000_000
 
+    # Downsampling
+    downsampling_enabled: bool = True
+    downsampling_voxel_size: float = 0.0005
+    gpu_chunk_size: int = 20_000_000
+    downsample_cache_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "downsample")
+
     # Floor extraction
     num_bins: int = 200
     width_multiplier: float = 2.5
