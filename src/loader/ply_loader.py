@@ -149,6 +149,35 @@ def load_ply_sampled(
     }
 
 
+def _extract_attributes(raw: np.ndarray, prop_names: list[str]) -> dict:
+    """structured array에서 좌표/색상/intensity/classification을 추출한다."""
+    points = np.column_stack([
+        raw["x"].astype(np.float32),
+        raw["y"].astype(np.float32),
+        raw["z"].astype(np.float32),
+    ])
+
+    colors = (
+        np.column_stack([
+            raw["red"].astype(np.float32) / 255.0,
+            raw["green"].astype(np.float32) / 255.0,
+            raw["blue"].astype(np.float32) / 255.0,
+        ])
+        if "red" in prop_names
+        else None
+    )
+
+    intensity = raw["scalar_Intensity"].astype(np.float32) if "scalar_Intensity" in prop_names else None
+    classification = raw["scalar_Classification"].astype(np.float32) if "scalar_Classification" in prop_names else None
+
+    return {
+        "points": points,
+        "colors": colors,
+        "intensity": intensity,
+        "classification": classification,
+    }
+
+
 def load_ply_full(
     filepath: str | Path,
     progress_callback: Callable | None = None,
@@ -172,37 +201,13 @@ def load_ply_full(
         f.seek(header["header_size"])
         raw = np.frombuffer(f.read(vertex_dtype.itemsize * total), dtype=vertex_dtype)
 
-    points = np.column_stack([
-        raw["x"].astype(np.float32),
-        raw["y"].astype(np.float32),
-        raw["z"].astype(np.float32),
-    ])
-
-    has_color = "red" in prop_names
-    has_intensity = "scalar_Intensity" in prop_names
-    has_classification = "scalar_Classification" in prop_names
-
-    colors = (
-        np.column_stack([
-            raw["red"].astype(np.float32) / 255.0,
-            raw["green"].astype(np.float32) / 255.0,
-            raw["blue"].astype(np.float32) / 255.0,
-        ])
-        if has_color
-        else None
-    )
-
-    intensity = raw["scalar_Intensity"].astype(np.float32) if has_intensity else None
-    classification = raw["scalar_Classification"].astype(np.float32) if has_classification else None
+    result = _extract_attributes(raw, prop_names)
 
     if progress_callback:
         progress_callback(total, total)
 
     return {
-        "points": points,
-        "colors": colors,
-        "intensity": intensity,
-        "classification": classification,
+        **result,
         "total_vertices": total,
         "sampled_vertices": total,
     }
