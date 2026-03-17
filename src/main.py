@@ -2,6 +2,8 @@
 
 import time
 
+import numpy as np
+
 from config import Config
 from utils import create_progress_bar, select_file
 
@@ -11,6 +13,7 @@ def main() -> None:
     from viewer import visualizer
     from extractor import extract_floor
     from chart import generate_all_charts
+    from preprocessing.pipeline import load_and_downsample
 
     cfg = Config()
     filepath = select_file(cfg.data_dir)
@@ -20,21 +23,11 @@ def main() -> None:
     total = header["vertex_count"]
     print(f"\nFile: {filepath.name}")
     print(f"Total vertices: {total:,}")
-    print(f"Sampling: {cfg.max_points:,} points")
-    print()
 
-    # Load
-    start_time = time.time()
-    progress = create_progress_bar(label="Sampling")
-    data = ply_loader.load_ply_sampled(
-        filepath,
-        max_points=cfg.max_points,
-        progress_callback=progress,
-        seed=cfg.random_seed,
-        chunk_size=cfg.chunk_size,
-    )
-    elapsed = time.time() - start_time
-    print(f"\n\nLoaded {data['sampled_vertices']:,} points in {elapsed:.1f}s")
+    # Load + downsample
+    progress = create_progress_bar(label="Loading")
+    data = load_and_downsample(filepath, cfg, progress_callback=progress)
+    print(f"\nProcessing {data['sampled_vertices']:,} / {data['total_vertices']:,} points")
 
     # Floor extraction
     print("\nExtracting floor (3-stage: peak + Z-filter + intensity/color)...")
