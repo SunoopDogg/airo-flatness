@@ -166,6 +166,59 @@ class TestDownsampleVoxelGridGpu:
         )
         assert len(r_pts) == 2  # 2 voxels, not 4
 
+    def test_asymmetric_chunk_y_ranges_consistent(self):
+        """Chunked result must match single-pass when chunks have very different y ranges.
+
+        Chunk 1 has y in [0, 1] and chunk 2 has y in [0, 100].  Points at
+        y~0.1 appear in both chunks and must land in the same voxel.  Using a
+        relative ny computed per-chunk would assign different linear keys,
+        causing the overlapping voxel to be counted twice instead of once.
+        """
+        from preprocessing.downsampling import downsample_voxel_grid_gpu
+
+        voxel_size = 1.0
+
+        # Chunk 1: y range [0, 1] — one voxel at y-bin 0, one at y-bin 1
+        chunk1_pts = cp.array([
+            [0.1, 0.1, 0.1],  # voxel (0, 0, 0)
+            [0.2, 0.2, 0.2],  # voxel (0, 0, 0) — same voxel
+            [0.1, 1.1, 0.1],  # voxel (0, 1, 0) — different voxel
+        ], dtype=cp.float32)
+
+        # Chunk 2: y range [0, 100] — overlaps with chunk1 at y-bin 0
+        chunk2_pts = cp.array([
+            [0.3, 0.3, 0.3],   # voxel (0, 0, 0) — same as chunk1's first voxel
+            [0.1, 50.1, 0.1],  # voxel (0, 50, 0) — unique to chunk2
+            [0.1, 99.1, 0.1],  # voxel (0, 99, 0) — unique to chunk2
+        ], dtype=cp.float32)
+
+        all_pts = cp.concatenate([chunk1_pts, chunk2_pts], axis=0)
+        n = len(all_pts)
+        cols = cp.zeros((n, 3), dtype=cp.uint8)
+        inten = cp.ones(n, dtype=cp.float32)
+        classif = cp.zeros(n, dtype=cp.float32)
+
+        # Single-pass (truth)
+        r_single, _, _, _ = downsample_voxel_grid_gpu(
+            all_pts, cols, inten, classif,
+            voxel_size=voxel_size, gpu_chunk_size=n + 1,
+        )
+
+        # Chunked: chunk size 3 forces the 6 points into exactly 2 chunks
+        r_chunked, _, _, _ = downsample_voxel_grid_gpu(
+            all_pts, cols, inten, classif,
+            voxel_size=voxel_size, gpu_chunk_size=3,
+        )
+
+        assert len(r_single) == len(r_chunked), (
+            f"Single-pass produced {len(r_single)} voxels but chunked produced "
+            f"{len(r_chunked)} — voxel key inconsistency across chunks"
+        )
+
+        r_single_sorted = r_single[cp.argsort(r_single[:, 0] * 1000 + r_single[:, 1])].get()
+        r_chunked_sorted = r_chunked[cp.argsort(r_chunked[:, 0] * 1000 + r_chunked[:, 1])].get()
+        np.testing.assert_allclose(r_single_sorted, r_chunked_sorted, atol=1e-4)
+
 
 class TestDownsampleGpu:
     def test_entry_point_returns_4_tuple(self, simple_cloud):

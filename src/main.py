@@ -2,8 +2,6 @@
 
 import time
 
-import numpy as np
-
 from config import Config
 from utils import create_progress_bar, select_file
 

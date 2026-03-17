@@ -28,7 +28,6 @@ def main() -> None:
     filepath = select_file(cfg.data_dir)
 
     from preprocessing.pipeline import load_and_downsample
-    from loader import ply_loader
 
     header = ply_loader.read_ply_header(filepath)
     total = header["vertex_count"]
