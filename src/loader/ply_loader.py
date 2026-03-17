@@ -147,3 +147,62 @@ def load_ply_sampled(
         "total_vertices": total,
         "sampled_vertices": filled,
     }
+
+
+def load_ply_full(
+    filepath: str | Path,
+    progress_callback: Callable | None = None,
+) -> dict:
+    """PLY 파일의 전체 포인트를 로드한다 (샘플링 없음).
+
+    Args:
+        filepath: PLY 파일 경로
+        progress_callback: 진행률 콜백 함수 (current, total) -> None
+
+    Returns:
+        dict with keys: points (N,3), colors (N,3), intensity (N,), classification (N,),
+                        total_vertices (int), sampled_vertices (int)
+    """
+    header = read_ply_header(filepath)
+    total = header["vertex_count"]
+    vertex_dtype = header["np_dtype"]
+    prop_names = [p["name"] for p in header["properties"]]
+
+    with open(header["filepath"], "rb") as f:
+        f.seek(header["header_size"])
+        raw = np.frombuffer(f.read(vertex_dtype.itemsize * total), dtype=vertex_dtype)
+
+    points = np.column_stack([
+        raw["x"].astype(np.float32),
+        raw["y"].astype(np.float32),
+        raw["z"].astype(np.float32),
+    ])
+
+    has_color = "red" in prop_names
+    has_intensity = "scalar_Intensity" in prop_names
+    has_classification = "scalar_Classification" in prop_names
+
+    colors = (
+        np.column_stack([
+            raw["red"].astype(np.float32) / 255.0,
+            raw["green"].astype(np.float32) / 255.0,
+            raw["blue"].astype(np.float32) / 255.0,
+        ])
+        if has_color
+        else None
+    )
+
+    intensity = raw["scalar_Intensity"].astype(np.float32) if has_intensity else None
+    classification = raw["scalar_Classification"].astype(np.float32) if has_classification else None
+
+    if progress_callback:
+        progress_callback(total, total)
+
+    return {
+        "points": points,
+        "colors": colors,
+        "intensity": intensity,
+        "classification": classification,
+        "total_vertices": total,
+        "sampled_vertices": total,
+    }
