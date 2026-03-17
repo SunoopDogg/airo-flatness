@@ -1,7 +1,5 @@
 """Floor Roughness Figure Tool — interactive ROI selection + 3 publication figures."""
 
-import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
