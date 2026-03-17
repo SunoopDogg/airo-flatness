@@ -7,13 +7,12 @@ processing.  Handles points, colors, intensity, and classification.
 Key differences from airo-plyreader's implementation:
 - Carries (sums, counts) through merge instead of re-averaging
 - Uses GPU-based mode (majority vote) for classification
-- Uses global min-shift for cross-chunk consistent voxel keys without overflow
+- Uses absolute bit-packed voxel keys for cross-chunk consistency
 """
 
 import time
 from dataclasses import dataclass
 
-import numpy as np
 import cupy as cp
 
 
@@ -40,42 +39,6 @@ class VoxelAccumulation:
 # ---------------------------------------------------------------------------
 # Voxel key computation
 # ---------------------------------------------------------------------------
-
-def _compute_voxel_keys(
-    points: cp.ndarray,
-    voxel_size: float,
-    global_min: cp.ndarray | None = None,
-) -> cp.ndarray:
-    """Compute a linear voxel index for every point.
-
-    When *global_min* is provided the coordinates are shifted first so that
-    all voxel indices are non-negative and small.  The linear key is then
-    ``vi * ny * nz + vj * nz + vk`` using actual per-axis dimensions, which
-    prevents int64 overflow even for large coordinate ranges with tiny voxel
-    sizes.
-
-    When *global_min* is ``None`` (standalone / single-chunk usage) the
-    global minimum of the supplied *points* is used as the shift origin.
-
-    Returns:
-        Linear voxel keys as int64 array of shape (N,).
-    """
-    if global_min is not None:
-        coords = points - global_min
-    else:
-        coords = points - points.min(axis=0)
-
-    # Use float64 for division to avoid precision loss with small voxel sizes
-    voxel_size_d = cp.float64(voxel_size)
-    vi = cp.floor(coords[:, 0].astype(cp.float64) / voxel_size_d).astype(cp.int64)
-    vj = cp.floor(coords[:, 1].astype(cp.float64) / voxel_size_d).astype(cp.int64)
-    vk = cp.floor(coords[:, 2].astype(cp.float64) / voxel_size_d).astype(cp.int64)
-
-    ny = int(vj.max()) + 1 if len(vj) > 0 else 1
-    nz = int(vk.max()) + 1 if len(vk) > 0 else 1
-
-    return vi * (ny * nz) + vj * nz + vk
-
 
 def _compute_voxel_keys_absolute(
     points: cp.ndarray,
@@ -117,11 +80,11 @@ def _accumulate_voxel_chunk(
     intensity: cp.ndarray,
     classification: cp.ndarray,
     voxel_size: float,
-    global_min: cp.ndarray | None = None,
 ) -> VoxelAccumulation:
     """Accumulate point attributes into voxel sums for one chunk.
 
-    If *global_min* is ``None`` it is computed from *points*.
+    Uses absolute bit-packed voxel keys so that the same physical voxel
+    always maps to the same key regardless of chunk boundaries.
 
     Returns a :class:`VoxelAccumulation` holding **sums** and counts.
     """
@@ -136,11 +99,8 @@ def _accumulate_voxel_chunk(
             classification_inv=cp.empty(0, dtype=cp.int64),
         )
 
-    # Compute per-point voxel keys
-    if global_min is not None:
-        keys = _compute_voxel_keys(points, voxel_size, global_min)
-    else:
-        keys = _compute_voxel_keys_absolute(points, voxel_size)
+    # Compute per-point voxel keys using absolute coordinates
+    keys = _compute_voxel_keys_absolute(points, voxel_size)
 
     # Unique voxels and inverse mapping
     unique_keys, inverse = cp.unique(keys, return_inverse=True)
@@ -339,11 +299,10 @@ def downsample_voxel_grid_gpu(
 
     For large point clouds, processes in chunks to stay within GPU memory:
 
-    1. Compute *global_min* once from the full cloud.
-    2. Split into chunks of *gpu_chunk_size* points.
-    3. Accumulate sums+counts per chunk.
-    4. Merge all accumulations.
-    5. Finalize (divide sums by counts, compute mode for classification).
+    1. Split into chunks of *gpu_chunk_size* points.
+    2. Accumulate sums+counts per chunk using absolute voxel keys.
+    3. Merge all accumulations.
+    4. Finalize (divide sums by counts, compute mode for classification).
 
     Returns:
         (points, colors, intensity, classification) as CuPy arrays.
@@ -358,14 +317,11 @@ def downsample_voxel_grid_gpu(
 
     n_points = len(points)
 
-    # Global min for consistent voxel keys across chunks
-    global_min = points.min(axis=0)
-
     # Single pass for small clouds
     if n_points <= gpu_chunk_size:
         accum = _accumulate_voxel_chunk(
             points, colors, intensity, classification,
-            voxel_size, global_min,
+            voxel_size,
         )
         return _finalize_voxels(accum)
 
@@ -382,7 +338,6 @@ def downsample_voxel_grid_gpu(
             intensity[start:end],
             classification[start:end],
             voxel_size,
-            global_min,
         )
         accums.append(accum)
 
