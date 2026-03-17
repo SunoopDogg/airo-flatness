@@ -26,23 +26,19 @@ def main() -> None:
 
     # [1] File selection
     filepath = select_file(cfg.data_dir)
+
+    from preprocessing.pipeline import load_and_downsample
+    from loader import ply_loader
+
     header = ply_loader.read_ply_header(filepath)
     total = header["vertex_count"]
     print(f"\nFile: {filepath.name}")
     print(f"Total vertices: {total:,}")
-    print(f"Sampling: {cfg.max_points:,} points\n")
 
-    # [2] Load points
-    start = time.time()
+    # [2] Load + downsample
     progress = create_progress_bar(label="Loading")
-    data = ply_loader.load_ply_sampled(
-        filepath,
-        max_points=cfg.max_points,
-        progress_callback=progress,
-        seed=cfg.random_seed,
-        chunk_size=cfg.chunk_size,
-    )
-    print(f"\n\nLoaded {data['sampled_vertices']:,} points in {time.time() - start:.1f}s")
+    data = load_and_downsample(filepath, cfg, progress_callback=progress)
+    print(f"\nProcessing {data['sampled_vertices']:,} / {data['total_vertices']:,} points")
 
     points = data["points"]
     colors = data["colors"]
