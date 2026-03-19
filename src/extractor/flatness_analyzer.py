@@ -94,8 +94,8 @@ def analyze_flatness(
             cov = centered.T @ centered  # 3x3
 
             # SVD: smallest singular value's vector = surface normal
-            _, _, Vt = np.linalg.svd(cov)
-            normal = Vt[-1]  # last row = smallest singular vector
+            _, _, Vh = np.linalg.svd(cov)
+            normal = Vh[-1]  # last row = smallest singular vector
 
             # Tilt angle from vertical (Z axis)
             normal_z = abs(normal[2])

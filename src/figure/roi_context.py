@@ -7,7 +7,10 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 
-from figure.roi_selector import filter_points_by_roi, QuadROI
+from figure.roi_selector import filter_points_by_roi
+from utils import subsample_points, to_rgba
+
+ROI = tuple[float, float, float, float]
 
 SCALAR_BAR_ARGS = {
     "title": "Z (m)",
@@ -23,14 +26,14 @@ AXES_WIDGET_VIEWPORT = (0.08, 0.0, 0.22, 0.2)  # (xmin, ymin, xmax, ymax) normal
 
 def _clip_mesh_to_roi(
     mesh: pv.StructuredGrid,
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: ROI,
     z_range: tuple[float, float] | None = None,
 ) -> pv.PolyData | None:
     """Clip a surface mesh to the ROI polygon and Z range.
 
     Args:
         mesh: surface mesh to clip.
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
+        roi: (x_min, x_max, y_min, y_max) tuple.
         z_range: optional (z_min, z_max) for Z clipping.
             Falls back to mesh Z extent when None.
 
@@ -43,61 +46,16 @@ def _clip_mesh_to_roi(
         z_lo = float(mesh.points[:, 2].min())
         z_hi = float(mesh.points[:, 2].max())
 
-    if not isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi.to_axis_aligned()
-    else:
-        x_min, x_max, y_min, y_max = roi
+    x_min, x_max, y_min, y_max = roi
 
     surface = mesh.extract_surface()
     clipped = surface.clip_box(
         [x_min, x_max, y_min, y_max, z_lo, z_hi], invert=False,
     )
 
-    # For QuadROI, further clip to the actual polygon (not just AABB)
-    if not isinstance(roi, tuple) and clipped.n_cells > 0:
-        centers = clipped.cell_centers().points[:, :2]
-        v = roi.vertices
-        mask = np.ones(len(centers), dtype=bool)
-        for i in range(4):
-            j = (i + 1) % 4
-            ex = v[j, 0] - v[i, 0]
-            ey = v[j, 1] - v[i, 1]
-            cross = ex * (centers[:, 1] - v[i, 1]) - ey * (centers[:, 0] - v[i, 0])
-            mask &= cross >= 0
-        cell_ids = np.where(mask)[0]
-        if len(cell_ids) == 0:
-            return None
-        clipped = clipped.extract_cells(cell_ids)
-
     if clipped.n_points == 0:
         return None
     return clipped
-
-
-def _subsample_points(
-    points: np.ndarray,
-    max_points: int,
-    seed: int,
-    colors: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Subsample points if count exceeds max_points.
-
-    Args:
-        points: (N, 3) array.
-        max_points: maximum number of points to keep.
-        seed: random seed for reproducibility.
-        colors: optional (N, 3) RGB array to subsample alongside points.
-
-    Returns:
-        Tuple of (points, colors) where points is (M, 3) with M <= max_points,
-        and colors is (M, 3) or None.
-    """
-    if len(points) <= max_points:
-        return points, colors
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(points), max_points, replace=False)
-    sub_colors = colors[idx] if colors is not None else None
-    return points[idx], sub_colors
 
 
 ROI_COLOR = (0.0, 0.6, 0.0)
@@ -131,28 +89,25 @@ def _build_dashed_segments(
 
 
 def _build_dashed_rectangle_2d(
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: ROI,
     z: float,
 ) -> pv.PolyData:
-    """Build a dashed 2D rectangle outline on the XY plane at given Z.
+    """Build a dashed 2D quadrilateral outline on the XY plane at given Z.
 
     Args:
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
+        roi: (x_min, x_max, y_min, y_max) tuple.
         z: Z coordinate for the rectangle.
 
     Returns:
-        PyVista PolyData with dashed line cells forming a rectangle.
+        PyVista PolyData with dashed line cells forming a quadrilateral.
     """
-    if isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi
-        corners_2d = np.array([
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max],
-        ])
-    else:
-        corners_2d = roi.vertices
+    x_min, x_max, y_min, y_max = roi
+    corners_2d = np.array([
+        [x_min, y_min],
+        [x_max, y_min],
+        [x_max, y_max],
+        [x_min, y_max],
+    ])
     corners = np.column_stack([corners_2d, np.full(len(corners_2d), z)])
     all_points = []
     all_lines = []
@@ -168,30 +123,27 @@ def _build_dashed_rectangle_2d(
 
 
 def _build_dashed_box_3d(
-    roi: QuadROI | tuple[float, float, float, float],
+    roi: ROI,
     z_min: float,
     z_max: float,
 ) -> pv.PolyData:
     """Build a dashed 3D wireframe box.
 
     Args:
-        roi: QuadROI or (x_min, x_max, y_min, y_max) tuple.
+        roi: (x_min, x_max, y_min, y_max) tuple.
         z_min: bottom Z coordinate.
         z_max: top Z coordinate.
 
     Returns:
         PyVista PolyData with dashed line cells forming a box.
     """
-    if isinstance(roi, tuple):
-        x_min, x_max, y_min, y_max = roi
-        corners_2d = np.array([
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max],
-        ])
-    else:
-        corners_2d = roi.vertices
+    x_min, x_max, y_min, y_max = roi
+    corners_2d = np.array([
+        [x_min, y_min],
+        [x_max, y_min],
+        [x_max, y_max],
+        [x_min, y_max],
+    ])
     bottom = np.column_stack([corners_2d, np.full(4, z_min)])
     top = np.column_stack([corners_2d, np.full(4, z_max)])
     verts = np.vstack([bottom, top])
@@ -213,7 +165,7 @@ def _build_dashed_box_3d(
 
 
 ROI_ZOOM = 2.0
-ROI_PAN_UP = 0.6  # fraction of scene height to pan downward after zoom
+ROI_PAN_DOWN_RATIO = 0.6  # fraction of scene height to pan downward after zoom
 
 
 def _add_roi_legend(plotter: pv.Plotter) -> None:
@@ -248,7 +200,7 @@ def _add_roi_legend(plotter: pv.Plotter) -> None:
     plotter.renderer.AddViewProp(actor)
 
 
-def _create_point_cloud_plotter(
+def _create_offscreen_plotter(
     pts: np.ndarray,
     colors: np.ndarray | None = None,
 ) -> pv.Plotter:
@@ -269,10 +221,7 @@ def _create_point_cloud_plotter(
     cloud = pv.PolyData(pts)
 
     if colors is not None:
-        rgba = np.empty((len(colors), 4), dtype=np.uint8)
-        rgba[:, :3] = (colors * 255).astype(np.uint8)
-        rgba[:, 3] = 255
-        cloud["RGBA"] = rgba
+        cloud["RGBA"] = to_rgba(colors)
         plotter.add_mesh(cloud, scalars="RGBA", rgba=True, point_size=2.0, render_points_as_spheres=True)
     else:
         cloud["Z"] = pts[:, 2]
@@ -288,149 +237,107 @@ def _create_point_cloud_plotter(
     return plotter
 
 
-def render_roi_context_2d(
-    points: np.ndarray,
-    roi: QuadROI | tuple[float, float, float, float],
-    save_dir: Path,
-    max_points: int = 500_000,
-    seed: int = 42,
-    dpi: int = 300,
-    colors: np.ndarray | None = None,
-    filename: str | None = None,
-    mesh: pv.StructuredGrid | None = None,
-    z_range: tuple[float, float] | None = None,
-) -> None:
-    """Render full point cloud with 2D ROI rectangle overlay on XY plane.
-
-    The rectangle is placed at the Z median of all points.
-    Saved as roi_context_2d.png in isometric view.
-
-    Args:
-        points: (N, 3) full point cloud.
-        roi: (x_min, x_max, y_min, y_max) selected ROI bounds.
-        save_dir: directory to save the output image.
-        max_points: subsample limit for rendering performance.
-        seed: random seed for subsampling.
-        dpi: unused (PyVista uses window_size), kept for API consistency.
-        colors: optional (N, 3) RGB float array in [0, 1] for per-point color.
-        filename: output filename; defaults to "roi_context_2d.png".
-        mesh: optional surface mesh to overlay on the point cloud.
-        z_range: optional (z_min, z_max) for mesh Z clipping.
-    """
-    pts, sub_colors = _subsample_points(points, max_points, seed, colors=colors)
-
-    plotter = _create_point_cloud_plotter(pts, colors=sub_colors)
-
-    if mesh is not None:
-        clipped = _clip_mesh_to_roi(mesh, roi, z_range=z_range)
-        if clipped is not None:
-            plotter.add_mesh(clipped, scalars="Z", cmap="coolwarm", show_edges=False,
-                            scalar_bar_args=SCALAR_BAR_ARGS)
-
-    z_median = float(np.median(pts[:, 2]))
-    rect = _build_dashed_rectangle_2d(roi, z_median)
-    plotter.add_mesh(rect, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
-
-    _add_roi_legend(plotter)
-    plotter.add_axes(viewport=AXES_WIDGET_VIEWPORT)
+def _setup_camera_and_save(plotter: pv.Plotter, save_path: Path) -> None:
+    """Apply isometric view with zoom/pan and save screenshot."""
     plotter.view_isometric()
     plotter.camera.zoom(ROI_ZOOM)
-    # Pan camera upward to prevent bottom clipping after zoom
     try:
         cam = plotter.camera
         pos = list(cam.position)
         fp = list(cam.focal_point)
         bounds = plotter.renderer.ComputeVisiblePropBounds()
-        scene_height = bounds[5] - bounds[4]  # Z range
-        shift = scene_height * ROI_PAN_UP
+        scene_height = bounds[5] - bounds[4]
+        shift = scene_height * ROI_PAN_DOWN_RATIO
         pos[2] -= shift
         fp[2] -= shift
         cam.position = pos
         cam.focal_point = fp
     except (IndexError, TypeError, AttributeError):
-        pass  # skip pan in mock/test environments
-    if filename is None:
-        out_filename = "roi_context_2d_rgb.png" if colors is not None else "roi_context_2d.png"
-    else:
-        out_filename = filename
-    plotter.screenshot(str(save_dir / out_filename))
+        pass
+    plotter.screenshot(str(save_path))
     plotter.close()
+
+
+def _render_roi_context(
+    points: np.ndarray,
+    roi: ROI,
+    save_dir: Path,
+    *,
+    mode: str,  # "2d" | "3d"
+    max_points: int,
+    seed: int,
+    colors: np.ndarray | None,
+    filename: str | None,
+    mesh: pv.StructuredGrid | None,
+    z_range: tuple[float, float] | None,
+) -> None:
+    """Shared implementation for 2D and 3D ROI context rendering."""
+    if colors is not None:
+        pts, sub_colors = subsample_points(points, max_points, seed, colors)
+    else:
+        pts, = subsample_points(points, max_points, seed)
+        sub_colors = None
+
+    plotter = _create_offscreen_plotter(pts, colors=sub_colors)
+
+    # Mesh overlay
+    if mesh is not None:
+        clipped = _clip_mesh_to_roi(mesh, roi, z_range=z_range)
+        if clipped is not None:
+            plotter.add_mesh(
+                clipped, scalars="Z", cmap="coolwarm",
+                show_edges=False, scalar_bar_args=SCALAR_BAR_ARGS,
+            )
+
+    # ROI shape — branch point
+    if mode == "2d":
+        z_median = float(np.median(pts[:, 2]))
+        shape = _build_dashed_rectangle_2d(roi, z_median)
+    else:
+        if z_range is not None:
+            z_min, z_max = float(z_range[0]), float(z_range[1])
+        else:
+            roi_points = filter_points_by_roi(pts, roi)
+            if len(roi_points) > 0:
+                z_min = float(roi_points[:, 2].min())
+                z_max = float(roi_points[:, 2].max())
+            else:
+                z_min = float(pts[:, 2].min())
+                z_max = float(pts[:, 2].max())
+        shape = _build_dashed_box_3d(roi, z_min, z_max)
+
+    plotter.add_mesh(shape, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
+
+    _add_roi_legend(plotter)
+    plotter.add_axes(viewport=AXES_WIDGET_VIEWPORT)
+
+    # Determine output filename
+    if filename is None:
+        suffix = "_rgb" if colors is not None else ""
+        filename = f"roi_context_{mode}{suffix}.png"
+
+    _setup_camera_and_save(plotter, save_dir / filename)
+
+
+def render_roi_context_2d(
+    points: np.ndarray, roi: ROI, save_dir: Path,
+    max_points: int = 500_000, seed: int = 42, dpi: int = 300,
+    colors: np.ndarray | None = None, filename: str | None = None,
+    mesh: pv.StructuredGrid | None = None,
+    z_range: tuple[float, float] | None = None,
+) -> None:
+    """Render full point cloud with 2D ROI rectangle overlay on XY plane."""
+    _render_roi_context(points, roi, save_dir, mode="2d", max_points=max_points,
+                        seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)
 
 
 def render_roi_context_3d(
-    points: np.ndarray,
-    roi: QuadROI | tuple[float, float, float, float],
-    save_dir: Path,
-    max_points: int = 500_000,
-    seed: int = 42,
-    dpi: int = 300,
-    colors: np.ndarray | None = None,
-    filename: str | None = None,
+    points: np.ndarray, roi: ROI, save_dir: Path,
+    max_points: int = 500_000, seed: int = 42, dpi: int = 300,
+    colors: np.ndarray | None = None, filename: str | None = None,
     mesh: pv.StructuredGrid | None = None,
     z_range: tuple[float, float] | None = None,
 ) -> None:
-    """Render full point cloud with 3D ROI wireframe box overlay.
-
-    The box uses ROI XY bounds and Z min/max of points within the ROI.
-    Saved as roi_context_3d.png in isometric view.
-
-    Args:
-        points: (N, 3) full point cloud.
-        roi: (x_min, x_max, y_min, y_max) selected ROI bounds.
-        save_dir: directory to save the output image.
-        max_points: subsample limit for rendering performance.
-        seed: random seed for subsampling.
-        dpi: unused (PyVista uses window_size), kept for API consistency.
-        colors: optional (N, 3) RGB float array in [0, 1] for per-point color.
-        filename: output filename; defaults to "roi_context_3d.png".
-        mesh: optional surface mesh to overlay on the point cloud.
-        z_range: optional (z_min, z_max) for mesh Z clipping and box Z extent.
-    """
-    pts, sub_colors = _subsample_points(points, max_points, seed, colors=colors)
-
-    plotter = _create_point_cloud_plotter(pts, colors=sub_colors)
-
-    if mesh is not None:
-        clipped = _clip_mesh_to_roi(mesh, roi, z_range=z_range)
-        if clipped is not None:
-            plotter.add_mesh(clipped, scalars="Z", cmap="coolwarm", show_edges=False,
-                            scalar_bar_args=SCALAR_BAR_ARGS)
-
-    if z_range is not None:
-        z_min, z_max = float(z_range[0]), float(z_range[1])
-    else:
-        roi_points = filter_points_by_roi(pts, roi)
-        if len(roi_points) > 0:
-            z_min = float(roi_points[:, 2].min())
-            z_max = float(roi_points[:, 2].max())
-        else:
-            z_min = float(pts[:, 2].min())
-            z_max = float(pts[:, 2].max())
-
-    box = _build_dashed_box_3d(roi, z_min, z_max)
-    plotter.add_mesh(box, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
-
-    _add_roi_legend(plotter)
-    plotter.add_axes(viewport=AXES_WIDGET_VIEWPORT)
-    plotter.view_isometric()
-    plotter.camera.zoom(ROI_ZOOM)
-    # Pan camera upward to prevent bottom clipping after zoom
-    try:
-        cam = plotter.camera
-        pos = list(cam.position)
-        fp = list(cam.focal_point)
-        bounds = plotter.renderer.ComputeVisiblePropBounds()
-        scene_height = bounds[5] - bounds[4]  # Z range
-        shift = scene_height * ROI_PAN_UP
-        pos[2] -= shift
-        fp[2] -= shift
-        cam.position = pos
-        cam.focal_point = fp
-    except (IndexError, TypeError, AttributeError):
-        pass  # skip pan in mock/test environments
-    if filename is None:
-        out_filename = "roi_context_3d_rgb.png" if colors is not None else "roi_context_3d.png"
-    else:
-        out_filename = filename
-    plotter.screenshot(str(save_dir / out_filename))
-    plotter.close()
+    """Render full point cloud with 3D ROI wireframe box overlay."""
+    _render_roi_context(points, roi, save_dir, mode="3d", max_points=max_points,
+                        seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)

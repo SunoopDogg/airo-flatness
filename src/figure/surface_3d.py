@@ -8,6 +8,8 @@ import numpy as np
 from scipy.interpolate import griddata
 import pyvista as pv
 
+from utils import subsample_points
+
 
 def build_surface_mesh(
     points: np.ndarray,
@@ -28,12 +30,8 @@ def build_surface_mesh(
     Returns:
         PyVista StructuredGrid mesh.
     """
-    if len(points) > max_points:
-        rng = np.random.default_rng(seed)
-        idx = rng.choice(len(points), max_points, replace=False)
-        pts = points[idx].copy()
-    else:
-        pts = points.copy()
+    pts, = subsample_points(points, max_points, seed)
+    pts = pts.copy()
 
     if z_exaggeration != 1.0:
         z_mean = pts[:, 2].mean()
