@@ -48,14 +48,25 @@ def compute_height_grid(
     xi = np.clip(np.digitize(xs, x_edges) - 1, 0, nx - 1)
     yi = np.clip(np.digitize(ys, y_edges) - 1, 0, ny - 1)
 
-    grid = np.full((nx, ny), np.nan)
     cell_idx = xi * ny + yi
-    for idx in range(nx * ny):
-        mask = cell_idx == idx
-        if mask.sum() < min_points:
+    n_cells = nx * ny
+
+    # Sort by cell index so same-cell points are contiguous
+    order = np.argsort(cell_idx)
+    sorted_idx = cell_idx[order]
+    sorted_res = residuals[order]
+
+    # Find boundaries between cells
+    unique_cells, start_positions, counts = np.unique(
+        sorted_idx, return_index=True, return_counts=True,
+    )
+
+    grid = np.full((nx, ny), np.nan)
+    for i, (cell, start, count) in enumerate(zip(unique_cells, start_positions, counts)):
+        if count < min_points:
             continue
-        cell_res = residuals[mask]
-        grid[idx // ny, idx % ny] = cell_res.max() - cell_res.min()
+        cell_res = sorted_res[start:start + count]
+        grid[cell // ny, cell % ny] = cell_res.max() - cell_res.min()
 
     return grid, x_edges, y_edges, cell_size
 
