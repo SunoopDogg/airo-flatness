@@ -120,3 +120,31 @@ def select_file(data_dir: Path) -> Path:
             print(f"  Please enter a number between 1 and {len(ply_files)}")
         except (ValueError, EOFError):
             print("  Invalid input. Please enter a number.")
+
+
+def select_source(cache_dir: Path) -> str:
+    """Let user choose between original PLY and downsampled (cached) files.
+
+    Args:
+        cache_dir: directory containing .npz cache files.
+
+    Returns:
+        "original" or "downsampled".
+    """
+    if not cache_dir.is_dir() or not any(cache_dir.glob("*.npz")):
+        return "original"
+
+    print("\nSelect source type:")
+    print("  1) Original PLY")
+    print("  2) Downsampled (cached)")
+
+    while True:
+        try:
+            choice = input("\nSelect source number (1-2): ").strip()
+            if choice == "1":
+                return "original"
+            if choice == "2":
+                return "downsampled"
+            print("  Please enter 1 or 2.")
+        except (ValueError, EOFError):
+            print("  Invalid input. Please enter 1 or 2.")
