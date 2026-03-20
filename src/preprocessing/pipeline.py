@@ -1,5 +1,6 @@
 """Shared load + GPU downsample + cache pipeline."""
 
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -123,3 +124,34 @@ def load_and_downsample(
         print(f"Warning: Failed to save cache: {e}")
 
     return result
+
+
+def load_from_downsampled_cache(npz_path: Path) -> dict:
+    """Load downsampled data directly from an NPZ cache file.
+
+    Skips the full PLY load + GPU downsample pipeline. Used when the user
+    explicitly selects a cached downsampled file.
+
+    Args:
+        npz_path: Path to the .npz cache file.
+
+    Returns:
+        dict with keys: points, colors, intensity, classification,
+                        total_vertices, sampled_vertices
+    """
+    print(f"Loading cached data... {npz_path.name}")
+    try:
+        cached = np.load(npz_path, allow_pickle=False)
+    except Exception as e:
+        print(f"Error: Failed to load {npz_path.name}: {e}")
+        sys.exit(1)
+
+    n_points = len(cached["points"])
+    return {
+        "points": cached["points"],
+        "colors": cached["colors"] if "colors" in cached else None,
+        "intensity": cached["intensity"] if "intensity" in cached else None,
+        "classification": cached["classification"] if "classification" in cached else None,
+        "total_vertices": n_points,
+        "sampled_vertices": n_points,
+    }
