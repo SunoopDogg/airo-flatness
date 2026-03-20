@@ -14,8 +14,8 @@ def fit_plane(points: np.ndarray) -> tuple[float, float, float]:
     z = points[:, 2]
     # Normal equations: (A^T A) coeffs = A^T z
     # A^T A is only 3x3 regardless of N, much faster than full lstsq for large N.
-    sx = x.sum();  sy = y.sum();  n = len(x)
-    sxx = x @ x;  sxy = x @ y;  syy = y @ y
+    sx, sy, n = x.sum(), y.sum(), len(x)
+    sxx, sxy, syy = x @ x, x @ y, y @ y
     ATA = np.array([
         [sxx, sxy, sx],
         [sxy, syy, sy],

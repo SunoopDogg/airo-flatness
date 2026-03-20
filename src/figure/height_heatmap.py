@@ -49,7 +49,6 @@ def compute_height_grid(
     yi = np.clip(np.digitize(ys, y_edges) - 1, 0, ny - 1)
 
     cell_idx = xi * ny + yi
-    n_cells = nx * ny
 
     # Sort by cell index so same-cell points are contiguous
     order = np.argsort(cell_idx)
@@ -62,7 +61,7 @@ def compute_height_grid(
     )
 
     grid = np.full((nx, ny), np.nan)
-    for i, (cell, start, count) in enumerate(zip(unique_cells, start_positions, counts)):
+    for cell, start, count in zip(unique_cells, start_positions, counts):
         if count < min_points:
             continue
         cell_res = sorted_res[start:start + count]
