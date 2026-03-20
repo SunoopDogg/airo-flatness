@@ -49,23 +49,24 @@ def compute_height_grid(
     yi = np.clip(np.digitize(ys, y_edges) - 1, 0, ny - 1)
 
     cell_idx = xi * ny + yi
+    n_cells = nx * ny
 
-    # Sort by cell index so same-cell points are contiguous
-    order = np.argsort(cell_idx)
-    sorted_idx = cell_idx[order]
-    sorted_res = residuals[order]
+    # Vectorized per-cell min/max without sorting — O(N) instead of O(N log N)
+    cell_min = np.full(n_cells, np.inf)
+    cell_max = np.full(n_cells, -np.inf)
+    np.minimum.at(cell_min, cell_idx, residuals)
+    np.maximum.at(cell_max, cell_idx, residuals)
 
-    # Find boundaries between cells
-    unique_cells, start_positions, counts = np.unique(
-        sorted_idx, return_index=True, return_counts=True,
-    )
+    # Count points per cell
+    cell_counts = np.bincount(cell_idx, minlength=n_cells)
 
+    # Build grid: range = max - min, NaN for sparse cells
     grid = np.full((nx, ny), np.nan)
-    for cell, start, count in zip(unique_cells, start_positions, counts):
-        if count < min_points:
-            continue
-        cell_res = sorted_res[start:start + count]
-        grid[cell // ny, cell % ny] = cell_res.max() - cell_res.min()
+    valid = cell_counts >= min_points
+    ranges = cell_max - cell_min
+    flat_grid = grid.ravel()
+    flat_grid[valid] = ranges[valid]
+    grid = flat_grid.reshape(nx, ny)
 
     return grid, x_edges, y_edges, cell_size
 
