@@ -260,7 +260,7 @@ def _setup_camera_and_save(plotter: pv.Plotter, save_path: Path) -> None:
 
 def _render_roi_context(
     points: np.ndarray,
-    roi: ROI,
+    roi,
     save_dir: Path,
     *,
     mode: str,  # "2d" | "3d"
@@ -272,6 +272,10 @@ def _render_roi_context(
     z_range: tuple[float, float] | None,
 ) -> None:
     """Shared implementation for 2D and 3D ROI context rendering."""
+    # Convert QuadROI to axis-aligned tuple for dashed shape builders
+    from figure.roi_selector import QuadROI
+    roi_bounds: ROI = roi.to_axis_aligned() if isinstance(roi, QuadROI) else roi
+
     if colors is not None:
         pts, sub_colors = subsample_points(points, max_points, seed, colors)
     else:
@@ -282,7 +286,7 @@ def _render_roi_context(
 
     # Mesh overlay
     if mesh is not None:
-        clipped = _clip_mesh_to_roi(mesh, roi, z_range=z_range)
+        clipped = _clip_mesh_to_roi(mesh, roi_bounds, z_range=z_range)
         if clipped is not None:
             plotter.add_mesh(
                 clipped, scalars="Z", cmap="coolwarm",
@@ -292,7 +296,7 @@ def _render_roi_context(
     # ROI shape — branch point
     if mode == "2d":
         z_median = float(np.median(pts[:, 2]))
-        shape = _build_dashed_rectangle_2d(roi, z_median)
+        shape = _build_dashed_rectangle_2d(roi_bounds, z_median)
     else:
         if z_range is not None:
             z_min, z_max = float(z_range[0]), float(z_range[1])
@@ -304,7 +308,7 @@ def _render_roi_context(
             else:
                 z_min = float(pts[:, 2].min())
                 z_max = float(pts[:, 2].max())
-        shape = _build_dashed_box_3d(roi, z_min, z_max)
+        shape = _build_dashed_box_3d(roi_bounds, z_min, z_max)
 
     plotter.add_mesh(shape, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
 
