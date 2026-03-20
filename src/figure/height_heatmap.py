@@ -63,10 +63,7 @@ def compute_height_grid(
     # Build grid: range = max - min, NaN for sparse cells
     grid = np.full((nx, ny), np.nan)
     valid = cell_counts >= min_points
-    ranges = cell_max - cell_min
-    flat_grid = grid.ravel()
-    flat_grid[valid] = ranges[valid]
-    grid = flat_grid.reshape(nx, ny)
+    grid.ravel()[valid] = (cell_max - cell_min)[valid]
 
     return grid, x_edges, y_edges, cell_size
 
