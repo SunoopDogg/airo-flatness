@@ -2,11 +2,23 @@
 
 import numpy as np
 
+_CUPY_COMPUTE_OK = False
 try:
     import cupy
-    _get_xp = cupy.get_array_module
-except ImportError:
-    _get_xp = lambda *_: np
+    # Verify actual GPU compute works (not just import)
+    _test = cupy.array([1.0, 2.0])
+    _ = _test @ _test
+    _CUPY_COMPUTE_OK = True
+    del _test
+except Exception:
+    pass
+
+
+def _get_xp(*arrays):
+    """Return cupy if all arrays are CuPy and GPU compute works, else numpy."""
+    if not _CUPY_COMPUTE_OK:
+        return np
+    return cupy.get_array_module(*arrays)
 
 
 def fit_plane(points):
