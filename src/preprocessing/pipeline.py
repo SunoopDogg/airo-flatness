@@ -45,8 +45,10 @@ def load_and_downsample(
         elapsed = time.time() - start_time
         print(f"\n\nLoaded {data['sampled_vertices']:,} points in {elapsed:.1f}s")
         if gpu:
-            import cupy as cp
-            data["points"] = cp.asarray(data["points"])
+            from figure.detrend import _CUPY_COMPUTE_OK
+            if _CUPY_COMPUTE_OK:
+                import cupy as cp
+                data["points"] = cp.asarray(data["points"])
         return data
 
     # Try cache
@@ -58,8 +60,10 @@ def load_and_downsample(
         print(f"Loaded from cache: {cache_path}")
         points = cached["points"]
         if gpu:
-            import cupy as cp
-            points = cp.asarray(points)
+            from figure.detrend import _CUPY_COMPUTE_OK
+            if _CUPY_COMPUTE_OK:
+                import cupy as cp
+                points = cp.asarray(points)
         return {
             "points": points,
             "colors": cached["colors"],
@@ -161,8 +165,10 @@ def load_from_downsampled_cache(npz_path: Path, gpu: bool = False) -> dict:
 
     points = cached["points"]
     if gpu:
-        import cupy as cp
-        points = cp.asarray(points)
+        from figure.detrend import _CUPY_COMPUTE_OK
+        if _CUPY_COMPUTE_OK:
+            import cupy as cp
+            points = cp.asarray(points)
     n_points = len(cached["points"])
     return {
         "points": points,

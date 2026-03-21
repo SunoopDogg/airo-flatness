@@ -50,9 +50,10 @@ def main() -> None:
     colors = data["colors"]       # NumPy array (CPU)
 
     # CPU copy for ROI selection (matplotlib) and downstream CPU ops
+    from figure.detrend import _CUPY_COMPUTE_OK
     try:
         import cupy as cp
-        _HAS_CUPY = True
+        _HAS_CUPY = _CUPY_COMPUTE_OK  # Only use GPU if compute actually works
         points_cpu = cp.asnumpy(gpu_points) if isinstance(gpu_points, cp.ndarray) else gpu_points
     except ImportError:
         _HAS_CUPY = False
