@@ -36,25 +36,34 @@ def main() -> None:
         print(f"Total vertices: {total:,}")
 
         progress = create_progress_bar(label="Loading")
-        data = load_and_downsample(filepath, cfg, progress_callback=progress)
+        data = load_and_downsample(filepath, cfg, progress_callback=progress, gpu=True)
     else:
         npz_path = select_downsampled_file(cfg.downsample_cache_dir)
-        data = load_from_downsampled_cache(npz_path)
+        data = load_from_downsampled_cache(npz_path, gpu=True)
         filepath = npz_path
         print(f"\nFile: {npz_path.name}")
         print(f"Downsampled points: {data['sampled_vertices']:,}")
 
     print(f"\nProcessing {data['sampled_vertices']:,} / {data['total_vertices']:,} points")
 
-    points = data["points"]
-    colors = data["colors"]
+    gpu_points = data["points"]  # CuPy array (GPU) or NumPy if no GPU
+    colors = data["colors"]       # NumPy array (CPU)
+
+    # CPU copy for ROI selection (matplotlib) and downstream CPU ops
+    try:
+        import cupy as cp
+        _HAS_CUPY = True
+        points_cpu = cp.asnumpy(gpu_points) if isinstance(gpu_points, cp.ndarray) else gpu_points
+    except ImportError:
+        _HAS_CUPY = False
+        points_cpu = gpu_points
 
     # [3] ROI selection (with retry loop)
     while True:
         print("\nSelect ROI region on the top-view plot (click 4 points, Q to apply).")
         try:
             roi = select_roi(
-                points,
+                points_cpu,
                 max_display=cfg.fig_roi_subsample,
                 seed=cfg.random_seed,
             )
@@ -62,8 +71,8 @@ def main() -> None:
             print("  No region selected. Please try again.")
             continue
 
-        roi_points = filter_points_by_roi(points, roi)
-        n_roi = len(roi_points)
+        roi_points_cpu = filter_points_by_roi(points_cpu, roi)
+        n_roi = len(roi_points_cpu)
 
         if n_roi < cfg.fig_roi_min_points:
             print(f"  Selected region has only {n_roi} points "
@@ -87,13 +96,13 @@ def main() -> None:
     while True:
         print("\nSelect Z range on the histogram (drag to select, then close window).")
         try:
-            z_min, z_max = select_z_roi(roi_points)
+            z_min, z_max = select_z_roi(roi_points_cpu)
         except ValueError:
             print("  No Z range selected. Please try again.")
             continue
 
-        z_filtered = filter_points_by_z(roi_points, z_min, z_max)
-        n_z = len(z_filtered)
+        z_filtered_cpu = filter_points_by_z(roi_points_cpu, z_min, z_max)
+        n_z = len(z_filtered_cpu)
 
         if n_z < cfg.fig_roi_min_points:
             print(f"  Z range has only {n_z} points "
@@ -104,12 +113,13 @@ def main() -> None:
         print(f"  Points after Z filter: {n_z:,}")
         break
 
-    roi_points = z_filtered
+    roi_points_gpu = cp.asarray(z_filtered_cpu) if _HAS_CUPY else z_filtered_cpu
+    roi_points_cpu = z_filtered_cpu
 
     # [5] Compute heatmap grid
     print("\nGenerating height deviation heatmap...")
     grid, x_edges, y_edges, cell_size = compute_height_grid(
-        roi_points,
+        roi_points_gpu,
         target_grid=cfg.fig_heatmap_target_grid,
         min_points=cfg.fig_heatmap_min_points,
     )
@@ -120,7 +130,7 @@ def main() -> None:
 
     # [5c] Compute and save height profile
     print("\nGenerating X-direction height profile...")
-    x_centers, z_means = compute_height_profile(roi_points, cell_size)
+    x_centers, z_means = compute_height_profile(roi_points_gpu, cell_size)
     if len(x_centers) > 0:
         plot_height_profile(x_centers, z_means, save_dir, dpi=cfg.fig_dpi)
         print("  Saved: height_profile.png, height_profile.pdf")
@@ -131,7 +141,7 @@ def main() -> None:
     print("\nBuilding 3D surface mesh...")
     try:
         mesh = build_surface_mesh(
-            roi_points,
+            roi_points_cpu,
             max_points=cfg.fig_delaunay_max_points,
             grid_resolution=cfg.fig_grid_resolution,
             z_exaggeration=cfg.fig_z_exaggeration,
@@ -149,14 +159,14 @@ def main() -> None:
     print("\nGenerating ROI context views...")
     from figure.roi_context import render_roi_context_2d, render_roi_context_3d
     render_roi_context_2d(
-        points, roi, save_dir,
+        points_cpu, roi, save_dir,
         max_points=cfg.fig_roi_subsample,
         seed=cfg.random_seed,
         dpi=cfg.fig_dpi,
     )
     print("  Saved: roi_context_2d.png")
     render_roi_context_3d(
-        points, roi, save_dir,
+        points_cpu, roi, save_dir,
         max_points=cfg.fig_roi_subsample,
         seed=cfg.random_seed,
         dpi=cfg.fig_dpi,
@@ -165,7 +175,7 @@ def main() -> None:
 
     if colors is not None:
         render_roi_context_2d(
-            points, roi, save_dir,
+            points_cpu, roi, save_dir,
             max_points=cfg.fig_roi_subsample,
             seed=cfg.random_seed,
             dpi=cfg.fig_dpi,
@@ -175,7 +185,7 @@ def main() -> None:
         )
         print("  Saved: roi_context_2d_rgb.png")
         render_roi_context_3d(
-            points, roi, save_dir,
+            points_cpu, roi, save_dir,
             max_points=cfg.fig_roi_subsample,
             seed=cfg.random_seed,
             dpi=cfg.fig_dpi,

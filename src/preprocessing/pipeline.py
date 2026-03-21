@@ -16,6 +16,7 @@ def load_and_downsample(
     filepath: Path,
     config: Config,
     progress_callback: Callable | None = None,
+    gpu: bool = False,
 ) -> dict:
     """Load PLY file and apply GPU voxel downsampling (or fall back to random sampling).
 
@@ -43,6 +44,9 @@ def load_and_downsample(
         )
         elapsed = time.time() - start_time
         print(f"\n\nLoaded {data['sampled_vertices']:,} points in {elapsed:.1f}s")
+        if gpu:
+            import cupy as cp
+            data["points"] = cp.asarray(data["points"])
         return data
 
     # Try cache
@@ -52,8 +56,15 @@ def load_and_downsample(
     cached = load_cache(cache_path, filepath)
     if cached is not None:
         print(f"Loaded from cache: {cache_path}")
+        points = cached["points"]
+        if gpu:
+            import cupy as cp
+            points = cp.asarray(points)
         return {
-            **cached,
+            "points": points,
+            "colors": cached["colors"],
+            "intensity": cached["intensity"],
+            "classification": cached["classification"],
             "total_vertices": total,
             "sampled_vertices": len(cached["points"]),
         }
@@ -102,9 +113,10 @@ def load_and_downsample(
         gpu_chunk_size=config.gpu_chunk_size,
     )
 
-    # GPU -> CPU
+    # GPU -> CPU (or keep on GPU if gpu=True)
+    result_points = ds_pts if gpu else ds_pts.get()
     result = {
-        "points": ds_pts.get(),
+        "points": result_points,
         "colors": ds_cols.get().astype(np.float32) / 255.0,
         "intensity": ds_int.get() if has_intensity else None,
         "classification": ds_cls.get() if has_classification else None,
@@ -112,11 +124,12 @@ def load_and_downsample(
         "sampled_vertices": len(ds_pts),
     }
 
-    # Save cache
+    # Save cache (always use CPU points)
+    cache_points = ds_pts.get() if gpu else result["points"]
     try:
         print(f"Saving cache to: {cache_path}")
         save_cache(
-            cache_path, result["points"], result["colors"],
+            cache_path, cache_points, result["colors"],
             result["intensity"], result["classification"], filepath,
         )
         print("Cache saved successfully")
@@ -126,7 +139,7 @@ def load_and_downsample(
     return result
 
 
-def load_from_downsampled_cache(npz_path: Path) -> dict:
+def load_from_downsampled_cache(npz_path: Path, gpu: bool = False) -> dict:
     """Load downsampled data directly from an NPZ cache file.
 
     Skips the full PLY load + GPU downsample pipeline. Used when the user
@@ -146,9 +159,13 @@ def load_from_downsampled_cache(npz_path: Path) -> dict:
         print(f"Error: Failed to load {npz_path.name}: {e}")
         sys.exit(1)
 
+    points = cached["points"]
+    if gpu:
+        import cupy as cp
+        points = cp.asarray(points)
     n_points = len(cached["points"])
     return {
-        "points": cached["points"],
+        "points": points,
         "colors": cached["colors"] if "colors" in cached else None,
         "intensity": cached["intensity"] if "intensity" in cached else None,
         "classification": cached["classification"] if "classification" in cached else None,
