@@ -65,3 +65,26 @@ class TestLoadFromDownsampledCache:
         corrupt.write_bytes(b"not a valid npz file")
         with pytest.raises(SystemExit):
             load_from_downsampled_cache(corrupt)
+
+
+class TestRoundTripWithSaveCache:
+    def test_save_cache_then_load_from_downsampled(self, tmp_path):
+        """Verify NPZ saved by save_cache() is loadable by load_from_downsampled_cache()."""
+        source = tmp_path / "scan.ply"
+        source.write_bytes(b"dummy ply")
+        cache_path = tmp_path / "scan-0_0005.npz"
+
+        pts = np.random.rand(200, 3).astype(np.float32)
+        cols = np.random.rand(200, 3).astype(np.float32)
+        ints = np.random.rand(200).astype(np.float32)
+        cls = np.array([2.0] * 200, dtype=np.float32)
+
+        save_cache(cache_path, pts, cols, ints, cls, source)
+        data = load_from_downsampled_cache(cache_path)
+
+        np.testing.assert_array_equal(data["points"], pts)
+        np.testing.assert_array_equal(data["colors"], cols)
+        np.testing.assert_array_equal(data["intensity"], ints)
+        np.testing.assert_array_equal(data["classification"], cls)
+        assert data["total_vertices"] == 200
+        assert data["sampled_vertices"] == 200
