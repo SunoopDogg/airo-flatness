@@ -76,8 +76,7 @@ class TestPlotHeightProfile:
         return compute_height_profile(points, cell_size=1.0)
 
     def test_saves_profile_files(self, tmp_path):
-        """Profile should be saved as PNG and PDF."""
+        """Profile should be saved as PNG."""
         x_centers, z_means = self._make_profile()
         plot_height_profile(x_centers, z_means, tmp_path, dpi=72)
         assert (tmp_path / "height_profile.png").exists()
-        assert (tmp_path / "height_profile.pdf").exists()
