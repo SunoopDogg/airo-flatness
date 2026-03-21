@@ -12,27 +12,26 @@ from figure.detrend import detrend_points
 
 
 def compute_height_profile(
-    points: np.ndarray,
+    points,
     cell_size: float,
     strip_ratio: float = 0.5,
     min_points: int = 3,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute strip-averaged Z residual profile along X axis.
 
-    Args:
-        points: (N, 3) XYZ array.
-        cell_size: bin width along X in meters.
-        strip_ratio: fraction of Y range to use (centered).
-        min_points: minimum points per X bin.
-
-    Returns:
-        (x_centers, z_means): arrays of bin centers and mean Z residuals.
+    Accepts NumPy or CuPy arrays. Returns NumPy arrays (for matplotlib).
     """
+    try:
+        import cupy
+        xp = cupy.get_array_module(points)
+    except ImportError:
+        xp = np
+
     residuals = detrend_points(points)
 
     # Filter to central Y strip
     y = points[:, 1]
-    y_min, y_max = y.min(), y.max()
+    y_min, y_max = float(y.min()), float(y.max())
     y_center = (y_min + y_max) / 2
     y_half = (y_max - y_min) * strip_ratio / 2
     strip_mask = (y >= y_center - y_half) & (y <= y_center + y_half)
@@ -40,24 +39,39 @@ def compute_height_profile(
     x_strip = points[strip_mask, 0]
     r_strip = residuals[strip_mask]
 
+    if len(x_strip) == 0:
+        return np.array([]), np.array([])
+
     # Bin along X
-    x_min, x_max = x_strip.min(), x_strip.max()
-    edges = np.arange(x_min, x_max + cell_size, cell_size)
+    x_min, x_max = float(x_strip.min()), float(x_strip.max())
+    edges = xp.arange(x_min, x_max + cell_size, cell_size)
     if len(edges) < 2:
-        edges = np.array([x_min, x_min + cell_size])
+        edges = xp.array([x_min, x_min + cell_size])
 
-    bin_idx = np.clip(np.digitize(x_strip, edges) - 1, 0, len(edges) - 2)
+    n_bins = len(edges) - 1
+    bin_idx = xp.clip(xp.digitize(x_strip, edges) - 1, 0, n_bins - 1).astype(xp.int64)
 
-    x_centers_list = []
-    z_means_list = []
-    for i in range(len(edges) - 1):
-        mask = bin_idx == i
-        if mask.sum() < min_points:
-            continue
-        x_centers_list.append((edges[i] + edges[i + 1]) / 2)
-        z_means_list.append(r_strip[mask].mean())
+    # Vectorized mean per bin using bincount
+    counts = xp.bincount(bin_idx, minlength=n_bins)
+    sums = xp.bincount(bin_idx, weights=r_strip, minlength=n_bins)
 
-    return np.array(x_centers_list), np.array(z_means_list)
+    valid = counts >= min_points
+    means = xp.zeros(n_bins, dtype=r_strip.dtype)
+    means[valid] = sums[valid] / counts[valid]
+
+    # Bin centers
+    centers = (edges[:-1] + edges[1:]) / 2
+
+    # Filter to valid bins and convert to NumPy
+    if xp is not np:
+        valid_np = valid.get()
+        x_centers = centers.get()[valid_np]
+        z_means = means.get()[valid_np]
+    else:
+        x_centers = centers[valid]
+        z_means = means[valid]
+
+    return np.asarray(x_centers), np.asarray(z_means)
 
 
 def plot_height_profile(
