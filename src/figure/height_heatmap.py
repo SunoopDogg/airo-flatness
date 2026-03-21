@@ -19,11 +19,8 @@ def compute_height_grid(
 
     Accepts NumPy or CuPy arrays. Returns NumPy arrays (for matplotlib).
     """
-    try:
-        import cupy
-        xp = cupy.get_array_module(points)
-    except ImportError:
-        xp = np
+    from figure.detrend import _get_xp
+    xp = _get_xp(points)
 
     residuals = detrend_points(points)
 
