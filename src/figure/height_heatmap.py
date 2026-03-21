@@ -11,61 +11,68 @@ from figure.detrend import detrend_points
 
 
 def compute_height_grid(
-    points: np.ndarray,
+    points,
     target_grid: int = 100,
     min_points: int = 3,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Compute per-cell Z-range grid after plane detrending.
 
-    Args:
-        points: (N, 3) XYZ array.
-        target_grid: number of cells along longest axis.
-        min_points: minimum points per cell.
-
-    Returns:
-        (grid, x_edges, y_edges, cell_size)
-        grid: (nx, ny) array of Z-range values, NaN for sparse cells.
+    Accepts NumPy or CuPy arrays. Returns NumPy arrays (for matplotlib).
     """
+    try:
+        import cupy
+        xp = cupy.get_array_module(points)
+    except ImportError:
+        xp = np
+
     residuals = detrend_points(points)
 
-    xs = points[:, 0]
-    ys = points[:, 1]
-    x_min, x_max = xs.min(), xs.max()
-    y_min, y_max = ys.min(), ys.max()
+    xs, ys = points[:, 0], points[:, 1]
+    x_min, x_max = float(xs.min()), float(xs.max())
+    y_min, y_max = float(ys.min()), float(ys.max())
     longest = max(x_max - x_min, y_max - y_min)
     cell_size = longest / target_grid if longest > 0 else 1.0
 
-    x_edges = np.arange(x_min, x_max + cell_size, cell_size)
-    y_edges = np.arange(y_min, y_max + cell_size, cell_size)
+    # Edges on same device as data for digitize
+    x_edges = xp.arange(x_min, x_max + cell_size, cell_size)
+    y_edges = xp.arange(y_min, y_max + cell_size, cell_size)
     if len(x_edges) < 2:
-        x_edges = np.array([x_min, x_min + cell_size])
+        x_edges = xp.array([x_min, x_min + cell_size])
     if len(y_edges) < 2:
-        y_edges = np.array([y_min, y_min + cell_size])
+        y_edges = xp.array([y_min, y_min + cell_size])
 
     nx = len(x_edges) - 1
     ny = len(y_edges) - 1
 
-    xi = np.clip(np.digitize(xs, x_edges) - 1, 0, nx - 1)
-    yi = np.clip(np.digitize(ys, y_edges) - 1, 0, ny - 1)
+    xi = xp.clip(xp.digitize(xs, x_edges) - 1, 0, nx - 1)
+    yi = xp.clip(xp.digitize(ys, y_edges) - 1, 0, ny - 1)
 
     cell_idx = xi * ny + yi
     n_cells = nx * ny
 
-    # Vectorized per-cell min/max without sorting — O(N) instead of O(N log N)
-    cell_min = np.full(n_cells, np.inf)
-    cell_max = np.full(n_cells, -np.inf)
-    np.minimum.at(cell_min, cell_idx, residuals)
-    np.maximum.at(cell_max, cell_idx, residuals)
+    cell_min = xp.full(n_cells, xp.inf)
+    cell_max = xp.full(n_cells, -xp.inf)
+    xp.minimum.at(cell_min, cell_idx, residuals)
+    xp.maximum.at(cell_max, cell_idx, residuals)
 
-    # Count points per cell
-    cell_counts = np.bincount(cell_idx, minlength=n_cells)
+    cell_counts = xp.bincount(cell_idx.astype(xp.int64), minlength=n_cells)
 
-    # Build grid: range = max - min, NaN for sparse cells
+    # Build grid and convert to NumPy for matplotlib
     grid = np.full((nx, ny), np.nan)
     valid = cell_counts >= min_points
-    grid.ravel()[valid] = (cell_max - cell_min)[valid]
+    if xp is not np:
+        ranges = (cell_max - cell_min).get()
+        valid_np = valid.get()
+    else:
+        ranges = cell_max - cell_min
+        valid_np = valid
+    grid.ravel()[valid_np] = ranges[valid_np]
 
-    return grid, x_edges, y_edges, cell_size
+    # Edges as NumPy for matplotlib
+    x_edges_np = x_edges.get() if xp is not np else x_edges
+    y_edges_np = y_edges.get() if xp is not np else y_edges
+
+    return grid, x_edges_np, y_edges_np, cell_size
 
 
 def plot_height_heatmap(
