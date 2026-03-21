@@ -2,44 +2,49 @@
 
 import numpy as np
 
+try:
+    import cupy
+    _get_xp = cupy.get_array_module
+except ImportError:
+    _get_xp = lambda *_: np
 
-def fit_plane(points: np.ndarray) -> tuple[float, float, float]:
-    """Fit a plane Z = aX + bY + c to (N,3) points using least squares.
 
-    Returns:
-        (a, b, c) plane coefficients.
+def fit_plane(points):
+    """Fit a plane Z = aX + bY + c to (N,3) points using normal equations.
+
+    Returns coefficients as array elements (not Python floats) to keep
+    GPU arrays on device when input is CuPy.
     """
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    # Normal equations: (A^T A) coeffs = A^T z
-    # A^T A is only 3x3 regardless of N, much faster than full lstsq for large N.
-    sx, sy, n = x.sum(), y.sum(), len(x)
+    xp = _get_xp(points)
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+
+    sx, sy, n = x.sum(), y.sum(), xp.float64(len(x))
     sxx, sxy, syy = x @ x, x @ y, y @ y
-    ATA = np.array([
+
+    ATA = xp.array([
         [sxx, sxy, sx],
         [sxy, syy, sy],
         [sx,  sy,  n ],
-    ])
-    ATz = np.array([x @ z, y @ z, z.sum()])
+    ], dtype=xp.float64)
+    ATz = xp.array([x @ z, y @ z, z.sum()], dtype=xp.float64)
+
     try:
-        coeffs = np.linalg.solve(ATA, ATz)
-    except np.linalg.LinAlgError:
-        # Fallback for singular/underdetermined cases (e.g. < 3 points)
-        A = np.column_stack([x, y, np.ones_like(x)])
-        coeffs, *_ = np.linalg.lstsq(A, z, rcond=None)
-    return float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
+        coeffs = xp.linalg.solve(ATA, ATz)
+    except Exception:
+        A = xp.column_stack([x, y, xp.ones(len(x), dtype=x.dtype)])
+        coeffs, *_ = xp.linalg.lstsq(A, z, rcond=None)
+
+    return coeffs[0], coeffs[1], coeffs[2]
 
 
-def detrend_points(points: np.ndarray) -> np.ndarray:
+def detrend_points(points):
     """Remove planar trend from points, returning Z residuals.
 
     Args:
-        points: (N, 3) array of XYZ coordinates.
+        points: (N, 3) array (NumPy or CuPy).
 
     Returns:
-        (N,) array of Z residuals after subtracting fitted plane.
+        (N,) array of Z residuals (same type as input).
     """
     a, b, c = fit_plane(points)
-    z_fitted = a * points[:, 0] + b * points[:, 1] + c
-    return points[:, 2] - z_fitted
+    return points[:, 2] - (a * points[:, 0] + b * points[:, 1] + c)
