@@ -77,7 +77,7 @@ def plot_height_profile(
     save_dir: Path,
     dpi: int = 300,
 ) -> None:
-    """Render and save the X-direction height profile as PNG + PDF.
+    """Render and save the X-direction height profile as PNG.
 
     Args:
         x_centers: (M,) array of X bin centers in meters.
@@ -127,6 +127,5 @@ def plot_height_profile(
     ax.legend()
     fig.tight_layout()
 
-    for fmt in ("png", "pdf"):
-        plt.savefig(save_dir / f"height_profile.{fmt}", dpi=dpi, bbox_inches="tight")
+    plt.savefig(save_dir / "height_profile.png", dpi=dpi, bbox_inches="tight")
     plt.close()

@@ -1,4 +1,4 @@
-"""Floor Roughness Figure Tool — interactive ROI selection + 3 publication figures."""
+"""Floor Roughness Figure Tool — interactive ROI selection + publication figures."""
 
 from datetime import datetime
 from pathlib import Path
@@ -15,9 +15,8 @@ from utils import create_progress_bar, select_downsampled_file, select_file, sel
 def main() -> None:
     from loader import ply_loader
     from figure.roi_selector import select_roi, filter_points_by_roi, select_z_roi, filter_points_by_z
-    from figure.height_heatmap import compute_height_grid, plot_height_heatmap
     from figure.height_profile import compute_height_profile, plot_height_profile
-    from figure.surface_3d import build_surface_mesh, show_surface_viewer
+    from figure.surface_3d import build_surface_mesh
     import numpy as np
 
     cfg = Config()
@@ -117,24 +116,19 @@ def main() -> None:
     roi_points_gpu = cp.asarray(z_filtered_cpu) if _HAS_CUPY else z_filtered_cpu
     roi_points_cpu = z_filtered_cpu
 
-    # [5] Compute heatmap grid
-    print("\nGenerating height deviation heatmap...")
-    grid, x_edges, y_edges, cell_size = compute_height_grid(
-        roi_points_gpu,
-        target_grid=cfg.fig_heatmap_target_grid,
-        min_points=cfg.fig_heatmap_min_points,
+    # [5] Compute cell size for height profile binning
+    longest = max(
+        float(roi_points_cpu[:, 0].max() - roi_points_cpu[:, 0].min()),
+        float(roi_points_cpu[:, 1].max() - roi_points_cpu[:, 1].min()),
     )
-
-    # [5b] Save heatmap
-    plot_height_heatmap(grid, x_edges, y_edges, cell_size, save_dir, dpi=cfg.fig_dpi)
-    print("  Saved: height_heatmap.png, height_heatmap.pdf")
+    cell_size = longest / cfg.fig_heatmap_target_grid if longest > 0 else 1.0
 
     # [5c] Compute and save height profile
     print("\nGenerating X-direction height profile...")
     x_centers, z_means = compute_height_profile(roi_points_gpu, cell_size)
     if len(x_centers) > 0:
         plot_height_profile(x_centers, z_means, save_dir, dpi=cfg.fig_dpi)
-        print("  Saved: height_profile.png, height_profile.pdf")
+        print("  Saved: height_profile.png")
     else:
         print("  Warning: no valid bins for height profile.")
 
@@ -156,24 +150,9 @@ def main() -> None:
 
     print(f"  Mesh: {mesh.n_points:,} vertices, {mesh.n_cells:,} cells")
 
-    # [3d] ROI context views (rendered after mesh is built so RGB variants get mesh overlay)
+    # [3d] ROI context views (RGB with mesh overlay)
     print("\nGenerating ROI context views...")
     from figure.roi_context import render_roi_context_2d, render_roi_context_3d
-    render_roi_context_2d(
-        points_cpu, roi, save_dir,
-        max_points=cfg.fig_roi_subsample,
-        seed=cfg.random_seed,
-        dpi=cfg.fig_dpi,
-    )
-    print("  Saved: roi_context_2d.png")
-    render_roi_context_3d(
-        points_cpu, roi, save_dir,
-        max_points=cfg.fig_roi_subsample,
-        seed=cfg.random_seed,
-        dpi=cfg.fig_dpi,
-    )
-    print("  Saved: roi_context_3d.png")
-
     if colors is not None:
         render_roi_context_2d(
             points_cpu, roi, save_dir,
@@ -195,10 +174,8 @@ def main() -> None:
             z_range=(z_min, z_max),
         )
         print("  Saved: roi_context_3d_rgb.png")
-
-    print("\nLaunching 3D viewer...")
-    print("  Keys: [S] capture, [I] isometric, [M] multi-view, [Q] quit")
-    show_surface_viewer(mesh, save_dir, dpi=cfg.fig_dpi)
+    else:
+        print("  Warning: no color data — skipping ROI context views.")
 
     print(f"\nAll figures saved to: {save_dir}")
 
