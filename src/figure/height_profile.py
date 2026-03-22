@@ -73,6 +73,7 @@ def plot_height_profile(
     z_means: np.ndarray,
     save_dir: Path,
     dpi: int = 300,
+    z_range: tuple[float, float] | None = None,
 ) -> None:
     """Render and save the X-direction height profile as PNG.
 
@@ -81,6 +82,7 @@ def plot_height_profile(
         z_means: (M,) array of mean raw Z values in meters.
         save_dir: output directory.
         dpi: output DPI.
+        z_range: optional (z_min, z_max) for Min/Max display.
     """
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10})
 
@@ -98,9 +100,12 @@ def plot_height_profile(
     ax.set_xlabel("Distance (m)")
     ax.set_ylabel("Z (m)")
 
-    z_min = float(np.min(z_means))
-    z_max = float(np.max(z_means))
-    stats_text = f"Min = {z_min:.4f} m\nMax = {z_max:.4f} m"
+    if z_range is not None:
+        z_min, z_max = float(z_range[0]), float(z_range[1])
+    else:
+        z_min = float(np.min(z_means))
+        z_max = float(np.max(z_means))
+    stats_text = f"Max = {z_max:.4f} m\nMin = {z_min:.4f} m"
     ax.text(
         0.98,
         0.97,

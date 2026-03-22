@@ -302,10 +302,13 @@ def _render_roi_context(
     if mesh is not None:
         clipped = _clip_mesh_to_roi(mesh, roi_bounds, z_range=z_range)
         if clipped is not None:
-            plotter.add_mesh(
-                clipped, scalars="Z", cmap="coolwarm",
+            mesh_kwargs = dict(
+                scalars="Z", cmap="coolwarm",
                 show_edges=False, scalar_bar_args=SCALAR_BAR_ARGS,
             )
+            if z_range is not None:
+                mesh_kwargs["clim"] = [float(z_range[0]), float(z_range[1])]
+            plotter.add_mesh(clipped, **mesh_kwargs)
 
     # ROI shape
     if mode == "2d":
