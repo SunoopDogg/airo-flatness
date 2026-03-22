@@ -24,27 +24,43 @@ def _get_xp(*arrays):
 def fit_plane(points):
     """Fit a plane Z = aX + bY + c to (N,3) points using normal equations.
 
-    Returns coefficients as array elements (not Python floats) to keep
-    GPU arrays on device when input is CuPy.
+    Sums are computed on-device (GPU-accelerated for CuPy inputs), but the
+    tiny 3x3 solve always runs on CPU to avoid cusolver dependency.
+    Coefficients are returned as Python floats so they work with both
+    NumPy and CuPy arrays in downstream arithmetic.
     """
     xp = _get_xp(points)
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
 
-    sx, sy, n = x.sum(), y.sum(), xp.float64(len(x))
-    sxx, sxy, syy = x @ x, x @ y, y @ y
+    # Compute sums on device (fast for large N)
+    sx  = float(x.sum())
+    sy  = float(y.sum())
+    n   = float(len(x))
+    sxx = float(x @ x)
+    sxy = float(x @ y)
+    syy = float(y @ y)
+    xz  = float(x @ z)
+    yz  = float(y @ z)
+    sz  = float(z.sum())
 
-    ATA = xp.array([
+    # Solve the 3x3 normal-equation system on CPU (zero benefit from GPU)
+    ATA = np.array([
         [sxx, sxy, sx],
         [sxy, syy, sy],
         [sx,  sy,  n ],
-    ], dtype=xp.float64)
-    ATz = xp.array([x @ z, y @ z, z.sum()], dtype=xp.float64)
+    ], dtype=np.float64)
+    ATz = np.array([xz, yz, sz], dtype=np.float64)
 
     try:
-        coeffs = xp.linalg.solve(ATA, ATz)
-    except Exception:
-        A = xp.column_stack([x, y, xp.ones(len(x), dtype=x.dtype)])
-        coeffs, *_ = xp.linalg.lstsq(A, z, rcond=None)
+        coeffs = np.linalg.solve(ATA, ATz)
+    except np.linalg.LinAlgError:
+        A = np.column_stack([
+            x.get() if xp is not np else x,
+            y.get() if xp is not np else y,
+            np.ones(int(n)),
+        ])
+        z_cpu = z.get() if xp is not np else z
+        coeffs, *_ = np.linalg.lstsq(A, z_cpu, rcond=None)
 
     return coeffs[0], coeffs[1], coeffs[2]
 
