@@ -150,30 +150,26 @@ def main() -> None:
 
     print(f"  Mesh: {mesh.n_points:,} vertices, {mesh.n_cells:,} cells")
 
-    # [3d] ROI context views (RGB with mesh overlay)
-    print("\nGenerating ROI context views...")
+    # [3d] ROI context views (interactive, RGB with mesh overlay)
     from figure.roi_context import render_roi_context_2d, render_roi_context_3d
     if colors is not None:
+        print("\nOpening ROI context viewers (S: capture, Q: close)...")
         render_roi_context_2d(
             points_cpu, roi, save_dir,
             max_points=cfg.fig_roi_subsample,
             seed=cfg.random_seed,
-            dpi=cfg.fig_dpi,
             colors=colors,
             mesh=mesh,
             z_range=(z_min, z_max),
         )
-        print("  Saved: roi_context_2d_rgb.png")
         render_roi_context_3d(
             points_cpu, roi, save_dir,
             max_points=cfg.fig_roi_subsample,
             seed=cfg.random_seed,
-            dpi=cfg.fig_dpi,
             colors=colors,
             mesh=mesh,
             z_range=(z_min, z_max),
         )
-        print("  Saved: roi_context_3d_rgb.png")
     else:
         print("  Warning: no color data — skipping ROI context views.")
 
