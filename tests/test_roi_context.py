@@ -137,7 +137,7 @@ class TestRenderInteractive2d:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
+            render_roi_context_2d(points, roi, tmp_path)
 
             # Should be interactive (title kwarg, not off_screen)
             call_kwargs = mock_pv.Plotter.call_args[1]
@@ -160,7 +160,7 @@ class TestRenderInteractive2d:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
+            render_roi_context_2d(points, roi, tmp_path)
 
             title = mock_pv.Plotter.call_args[1].get("title", "")
             assert "2D" in title
@@ -176,7 +176,7 @@ class TestRenderInteractive2d:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
+            render_roi_context_2d(points, roi, tmp_path)
 
             mock_plotter.add_key_event.assert_called_once_with("s", ANY)
 
@@ -193,7 +193,7 @@ class TestRenderInteractive3d:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_3d(points, roi, tmp_path, max_points=500, seed=42)
+            render_roi_context_3d(points, roi, tmp_path)
 
             mock_plotter.show.assert_called_once()
             mock_plotter.close.assert_called_once()
@@ -210,7 +210,7 @@ class TestRenderInteractive3d:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_3d(points, roi, tmp_path, max_points=500, seed=42)
+            render_roi_context_3d(points, roi, tmp_path)
 
             title = mock_pv.Plotter.call_args[1].get("title", "")
             assert "3D" in title
@@ -229,7 +229,7 @@ class TestRenderInteractiveRgb:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42, colors=colors)
+            render_roi_context_2d(points, roi, tmp_path, colors=colors)
 
             first_call = mock_plotter.add_mesh.call_args_list[0]
             _, kwargs = first_call
@@ -248,7 +248,7 @@ class TestRenderInteractiveRgb:
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
-            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42, colors=colors)
+            render_roi_context_2d(points, roi, tmp_path, colors=colors)
 
             # Extract and call the S-key handler
             handler = mock_plotter.add_key_event.call_args[0][1]
@@ -258,3 +258,22 @@ class TestRenderInteractiveRgb:
             mock_plotter.screenshot.assert_called_once_with(
                 str(tmp_path / "roi_context_2d_rgb.png")
             )
+
+
+class TestPointSizeParam:
+    def test_point_size_passed_to_plotter(self, tmp_path):
+        """point_size parameter should be forwarded to add_mesh."""
+        rng = np.random.default_rng(42)
+        points = rng.uniform(0, 10, (500, 3))
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            render_roi_context_2d(points, roi, tmp_path, point_size=5.0)
+
+            first_call = mock_plotter.add_mesh.call_args_list[0]
+            _, kwargs = first_call
+            assert kwargs.get("point_size") == 5.0
