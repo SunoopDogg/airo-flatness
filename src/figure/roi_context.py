@@ -276,6 +276,20 @@ def _render_roi_context(
     pts = points
     sub_colors = colors
 
+    # Remove points inside ROI + Z range so the mesh overlay is visible
+    if z_range is not None:
+        x_min, x_max, y_min, y_max = roi_bounds
+        z_lo, z_hi = float(z_range[0]), float(z_range[1])
+        inside = (
+            (pts[:, 0] >= x_min) & (pts[:, 0] <= x_max) &
+            (pts[:, 1] >= y_min) & (pts[:, 1] <= y_max) &
+            (pts[:, 2] >= z_lo) & (pts[:, 2] <= z_hi)
+        )
+        keep = ~inside
+        pts = pts[keep]
+        if sub_colors is not None:
+            sub_colors = sub_colors[keep]
+
     # Determine output filename
     if filename is None:
         suffix = "_rgb" if colors is not None else ""

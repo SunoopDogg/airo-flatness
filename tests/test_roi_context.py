@@ -277,3 +277,46 @@ class TestPointSizeParam:
             first_call = mock_plotter.add_mesh.call_args_list[0]
             _, kwargs = first_call
             assert kwargs.get("point_size") == 5.0
+
+
+class TestZRangeFilter:
+    def test_z_range_filters_roi_points(self, tmp_path):
+        """Points inside ROI + Z range should be removed when z_range is provided."""
+        rng = np.random.default_rng(42)
+        # Create points: some inside ROI+Z, some outside
+        inside = np.array([[3.0, 4.0, 5.0], [3.5, 4.5, 5.5]])  # inside ROI and Z
+        outside = rng.uniform(0, 1, (100, 3))  # outside ROI bounds
+        points = np.vstack([inside, outside])
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_polydata = MagicMock(side_effect=pv.PolyData)
+            mock_pv.PolyData = mock_polydata
+
+            render_roi_context_2d(points, roi, tmp_path, z_range=(4.0, 6.0))
+
+            # The PolyData created for point cloud should have fewer points
+            # (inside points removed)
+            cloud_call = mock_pv.PolyData.call_args_list[0]
+            rendered_pts = cloud_call[0][0]
+            assert len(rendered_pts) == 100  # only outside points remain
+
+    def test_no_filter_without_z_range(self, tmp_path):
+        """Without z_range, all points should be rendered."""
+        rng = np.random.default_rng(42)
+        points = rng.uniform(0, 10, (500, 3))
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_polydata = MagicMock(side_effect=pv.PolyData)
+            mock_pv.PolyData = mock_polydata
+
+            render_roi_context_2d(points, roi, tmp_path)
+
+            cloud_call = mock_pv.PolyData.call_args_list[0]
+            rendered_pts = cloud_call[0][0]
+            assert len(rendered_pts) == 500  # all points kept
