@@ -1,4 +1,4 @@
-"""X-direction height profile — strip-averaged Z residuals along X axis."""
+"""X-direction height profile — strip-averaged raw Z along X axis."""
 
 from __future__ import annotations
 
@@ -8,23 +8,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 
-from figure.detrend import detrend_points
-
-
 def compute_height_profile(
     points,
     cell_size: float,
     strip_ratio: float = 0.5,
     min_points: int = 3,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute strip-averaged Z residual profile along X axis.
+    """Compute strip-averaged raw Z profile along X axis.
 
     Accepts NumPy or CuPy arrays. Returns NumPy arrays (for matplotlib).
     """
     from figure.detrend import _get_xp
     xp = _get_xp(points)
 
-    residuals = detrend_points(points)
+    z_values = points[:, 2]
 
     # Filter to central Y strip
     y = points[:, 1]
@@ -34,7 +31,7 @@ def compute_height_profile(
     strip_mask = (y >= y_center - y_half) & (y <= y_center + y_half)
 
     x_strip = points[strip_mask, 0]
-    r_strip = residuals[strip_mask]
+    z_strip = z_values[strip_mask]
 
     if len(x_strip) == 0:
         return np.array([]), np.array([])
@@ -50,10 +47,10 @@ def compute_height_profile(
 
     # Vectorized mean per bin using bincount
     counts = xp.bincount(bin_idx, minlength=n_bins)
-    sums = xp.bincount(bin_idx, weights=r_strip, minlength=n_bins)
+    sums = xp.bincount(bin_idx, weights=z_strip, minlength=n_bins)
 
     valid = counts >= min_points
-    means = xp.zeros(n_bins, dtype=r_strip.dtype)
+    means = xp.zeros(n_bins, dtype=z_strip.dtype)
     means[valid] = sums[valid] / counts[valid]
 
     # Bin centers
@@ -81,37 +78,29 @@ def plot_height_profile(
 
     Args:
         x_centers: (M,) array of X bin centers in meters.
-        z_means: (M,) array of mean Z residuals in meters.
+        z_means: (M,) array of mean raw Z values in meters.
         save_dir: output directory.
         dpi: output DPI.
     """
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10})
 
-    z_mm = z_means * 1000
-    sigma = float(np.std(z_mm))
-    peak_to_valley = float(np.max(z_mm) - np.min(z_mm))
-
     fig, ax = plt.subplots(figsize=(10, 4))
-
-    # ±1σ band
-    ax.fill_between(x_centers, -sigma, sigma, color="#E0E0E0", label="±1σ band")
-
-    # Z=0 reference line
-    ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", label="Z=0")
 
     # Profile line (cubic spline for smooth curve)
     if len(x_centers) >= 4:
         x_smooth = np.linspace(x_centers[0], x_centers[-1], len(x_centers) * 10)
-        spline = make_interp_spline(x_centers, z_mm, k=3)
+        spline = make_interp_spline(x_centers, z_means, k=3)
         z_smooth = spline(x_smooth)
-        ax.plot(x_smooth, z_smooth, color="black", linewidth=1.0, label="Height profile")
+        ax.plot(x_smooth, z_smooth, color="black", linewidth=1.0)
     else:
-        ax.plot(x_centers, z_mm, color="black", linewidth=1.0, label="Height profile")
+        ax.plot(x_centers, z_means, color="black", linewidth=1.0)
 
     ax.set_xlabel("Distance (m)")
-    ax.set_ylabel("Height Residual (mm)")
+    ax.set_ylabel("Z (m)")
 
-    stats_text = f"σ = {sigma:.2f} mm\nPeak-to-valley = {peak_to_valley:.2f} mm"
+    z_min = float(np.min(z_means))
+    z_max = float(np.max(z_means))
+    stats_text = f"Min = {z_min:.4f} m\nMax = {z_max:.4f} m"
     ax.text(
         0.98,
         0.97,
@@ -124,7 +113,6 @@ def plot_height_profile(
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8),
     )
 
-    ax.legend()
     fig.tight_layout()
 
     plt.savefig(save_dir / "height_profile.png", dpi=dpi, bbox_inches="tight")
