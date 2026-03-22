@@ -60,6 +60,7 @@ class Config:
     # Figure tool
     fig_roi_subsample: int = 500_000
     fig_dpi: int = 300
+    fig_point_size: float = 2.0
     fig_heatmap_target_grid: int = 100
     fig_heatmap_min_points: int = 3
     fig_delaunay_max_points: int = 500_000
