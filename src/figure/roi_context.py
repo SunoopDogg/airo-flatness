@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -200,21 +201,24 @@ def _add_roi_legend(plotter: pv.Plotter) -> None:
     plotter.renderer.AddViewProp(actor)
 
 
-def _create_offscreen_plotter(
+def _create_plotter(
     pts: np.ndarray,
     colors: np.ndarray | None = None,
+    *,
+    title: str = "ROI Context",
 ) -> pv.Plotter:
-    """Create an off-screen plotter with the point cloud added.
+    """Create an interactive plotter with the point cloud added.
 
     Args:
         pts: (N, 3) subsampled point array.
         colors: optional (N, 3) RGB float array in [0, 1]. When provided,
             renders with RGBA scalars instead of viridis Z colormap.
+        title: window title displayed in the title bar.
 
     Returns:
         Configured PyVista plotter with point cloud mesh added.
     """
-    plotter = pv.Plotter(off_screen=True)
+    plotter = pv.Plotter(title=title)
     plotter.set_background("white")
     plotter.window_size = (1280, 720)
 
@@ -237,25 +241,34 @@ def _create_offscreen_plotter(
     return plotter
 
 
-def _setup_camera_and_save(plotter: pv.Plotter, save_path: Path) -> None:
-    """Apply isometric view with zoom/pan and save screenshot."""
-    plotter.view_isometric()
-    plotter.camera.zoom(ROI_ZOOM)
-    try:
+def _bind_screenshot_key(
+    plotter: pv.Plotter,
+    save_dir: Path,
+    filename: str,
+) -> None:
+    """Bind S key to capture screenshot + camera viewpoint JSON.
+
+    Args:
+        plotter: active PyVista plotter.
+        save_dir: directory to save files into.
+        filename: PNG filename (e.g. "roi_context_2d_rgb.png").
+    """
+    def _on_s_key() -> None:
+        png_path = save_dir / filename
+        plotter.screenshot(str(png_path))
+
         cam = plotter.camera
-        pos = list(cam.position)
-        fp = list(cam.focal_point)
-        bounds = plotter.renderer.ComputeVisiblePropBounds()
-        scene_height = bounds[5] - bounds[4]
-        shift = scene_height * ROI_PAN_DOWN_RATIO
-        pos[2] -= shift
-        fp[2] -= shift
-        cam.position = pos
-        cam.focal_point = fp
-    except (IndexError, TypeError, AttributeError):
-        pass
-    plotter.screenshot(str(save_path))
-    plotter.close()
+        stem = Path(filename).stem
+        json_path = save_dir / f"{stem}_camera.json"
+        viewpoint = {
+            "position": list(cam.position),
+            "focal_point": list(cam.focal_point),
+            "view_up": list(cam.up),
+        }
+        json_path.write_text(json.dumps(viewpoint, indent=2))
+        print(f"  Saved: {png_path.name}, {json_path.name}")
+
+    plotter.add_key_event("s", _on_s_key)
 
 
 def _render_roi_context(
@@ -271,7 +284,7 @@ def _render_roi_context(
     mesh: pv.StructuredGrid | None,
     z_range: tuple[float, float] | None,
 ) -> None:
-    """Shared implementation for 2D and 3D ROI context rendering."""
+    """Shared implementation for 2D and 3D ROI context interactive viewing."""
     # Convert QuadROI to axis-aligned tuple for dashed shape builders
     from figure.roi_selector import QuadROI
     roi_bounds: ROI = roi.to_axis_aligned() if isinstance(roi, QuadROI) else roi
@@ -282,7 +295,13 @@ def _render_roi_context(
         pts, = subsample_points(points, max_points, seed)
         sub_colors = None
 
-    plotter = _create_offscreen_plotter(pts, colors=sub_colors)
+    # Determine output filename
+    if filename is None:
+        suffix = "_rgb" if colors is not None else ""
+        filename = f"roi_context_{mode}{suffix}.png"
+
+    title = f"ROI {mode.upper()} | S: capture, Q: close"
+    plotter = _create_plotter(pts, colors=sub_colors, title=title)
 
     # Mesh overlay
     if mesh is not None:
@@ -293,7 +312,7 @@ def _render_roi_context(
                 show_edges=False, scalar_bar_args=SCALAR_BAR_ARGS,
             )
 
-    # ROI shape — branch point
+    # ROI shape
     if mode == "2d":
         z_median = float(np.median(pts[:, 2]))
         shape = _build_dashed_rectangle_2d(roi_bounds, z_median)
@@ -301,7 +320,15 @@ def _render_roi_context(
         if z_range is not None:
             z_min, z_max = float(z_range[0]), float(z_range[1])
         else:
-            roi_points = filter_points_by_roi(pts, roi)
+            if isinstance(roi, QuadROI):
+                roi_points = filter_points_by_roi(pts, roi)
+            else:
+                x_min, x_max, y_min, y_max = roi_bounds
+                mask = (
+                    (pts[:, 0] >= x_min) & (pts[:, 0] <= x_max) &
+                    (pts[:, 1] >= y_min) & (pts[:, 1] <= y_max)
+                )
+                roi_points = pts[mask]
             if len(roi_points) > 0:
                 z_min = float(roi_points[:, 2].min())
                 z_max = float(roi_points[:, 2].max())
@@ -315,33 +342,48 @@ def _render_roi_context(
     _add_roi_legend(plotter)
     plotter.add_axes(viewport=AXES_WIDGET_VIEWPORT)
 
-    # Determine output filename
-    if filename is None:
-        suffix = "_rgb" if colors is not None else ""
-        filename = f"roi_context_{mode}{suffix}.png"
+    # Initial camera: isometric + zoom + pan-down
+    plotter.view_isometric()
+    plotter.camera.zoom(ROI_ZOOM)
+    try:
+        cam = plotter.camera
+        pos = list(cam.position)
+        fp = list(cam.focal_point)
+        bounds = plotter.renderer.ComputeVisiblePropBounds()
+        scene_height = bounds[5] - bounds[4]
+        shift = scene_height * ROI_PAN_DOWN_RATIO
+        pos[2] -= shift
+        fp[2] -= shift
+        cam.position = pos
+        cam.focal_point = fp
+    except (IndexError, TypeError, AttributeError):
+        pass
 
-    _setup_camera_and_save(plotter, save_dir / filename)
+    # S-key capture + interactive show
+    _bind_screenshot_key(plotter, save_dir, filename)
+    plotter.show()
+    plotter.close()
 
 
 def render_roi_context_2d(
     points: np.ndarray, roi: ROI, save_dir: Path,
-    max_points: int = 500_000, seed: int = 42, dpi: int = 300,
+    max_points: int = 500_000, seed: int = 42,
     colors: np.ndarray | None = None, filename: str | None = None,
     mesh: pv.StructuredGrid | None = None,
     z_range: tuple[float, float] | None = None,
 ) -> None:
-    """Render full point cloud with 2D ROI rectangle overlay on XY plane."""
+    """Show interactive point cloud with 2D ROI rectangle overlay on XY plane."""
     _render_roi_context(points, roi, save_dir, mode="2d", max_points=max_points,
                         seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)
 
 
 def render_roi_context_3d(
     points: np.ndarray, roi: ROI, save_dir: Path,
-    max_points: int = 500_000, seed: int = 42, dpi: int = 300,
+    max_points: int = 500_000, seed: int = 42,
     colors: np.ndarray | None = None, filename: str | None = None,
     mesh: pv.StructuredGrid | None = None,
     z_range: tuple[float, float] | None = None,
 ) -> None:
-    """Render full point cloud with 3D ROI wireframe box overlay."""
+    """Show interactive point cloud with 3D ROI wireframe box overlay."""
     _render_roi_context(points, roi, save_dir, mode="3d", max_points=max_points,
                         seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)
