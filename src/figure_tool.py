@@ -156,19 +156,17 @@ def main() -> None:
         print("\nOpening ROI context viewers (S: capture, Q: close)...")
         render_roi_context_2d(
             points_cpu, roi, save_dir,
-            max_points=cfg.fig_roi_subsample,
-            seed=cfg.random_seed,
             colors=colors,
             mesh=mesh,
             z_range=(z_min, z_max),
+            point_size=cfg.fig_point_size,
         )
         render_roi_context_3d(
             points_cpu, roi, save_dir,
-            max_points=cfg.fig_roi_subsample,
-            seed=cfg.random_seed,
             colors=colors,
             mesh=mesh,
             z_range=(z_min, z_max),
+            point_size=cfg.fig_point_size,
         )
     else:
         print("  Warning: no color data — skipping ROI context views.")

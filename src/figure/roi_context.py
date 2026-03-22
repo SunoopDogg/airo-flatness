@@ -10,7 +10,7 @@ import numpy as np
 import pyvista as pv
 
 from figure.roi_selector import QuadROI, filter_points_by_roi
-from utils import subsample_points, to_rgba
+from utils import to_rgba
 
 ROI = tuple[float, float, float, float]
 
@@ -192,6 +192,7 @@ def _create_plotter(
     colors: np.ndarray | None = None,
     *,
     title: str = "ROI Context",
+    point_size: float = 2.0,
 ) -> pv.Plotter:
     """Create an interactive plotter with the point cloud added.
 
@@ -212,14 +213,14 @@ def _create_plotter(
 
     if colors is not None:
         cloud["RGBA"] = to_rgba(colors)
-        plotter.add_mesh(cloud, scalars="RGBA", rgba=True, point_size=2.0, render_points_as_spheres=True)
+        plotter.add_mesh(cloud, scalars="RGBA", rgba=True, point_size=point_size, render_points_as_spheres=True)
     else:
         cloud["Z"] = pts[:, 2]
         plotter.add_mesh(
             cloud,
             scalars="Z",
             cmap="viridis",
-            point_size=2.0,
+            point_size=point_size,
             render_points_as_spheres=True,
             scalar_bar_args=SCALAR_BAR_ARGS,
         )
@@ -263,21 +264,17 @@ def _render_roi_context(
     save_dir: Path,
     *,
     mode: Literal["2d", "3d"],
-    max_points: int,
-    seed: int,
     colors: np.ndarray | None,
     filename: str | None,
     mesh: pv.StructuredGrid | None,
     z_range: tuple[float, float] | None,
+    point_size: float,
 ) -> None:
     """Shared implementation for 2D and 3D ROI context interactive viewing."""
     roi_bounds: ROI = roi.to_axis_aligned() if isinstance(roi, QuadROI) else roi
 
-    if colors is not None:
-        pts, sub_colors = subsample_points(points, max_points, seed, colors)
-    else:
-        pts, = subsample_points(points, max_points, seed)
-        sub_colors = None
+    pts = points
+    sub_colors = colors
 
     # Determine output filename
     if filename is None:
@@ -285,7 +282,7 @@ def _render_roi_context(
         filename = f"roi_context_{mode}{suffix}.png"
 
     title = f"ROI {mode.upper()} | S: capture, Q: close"
-    plotter = _create_plotter(pts, colors=sub_colors, title=title)
+    plotter = _create_plotter(pts, colors=sub_colors, title=title, point_size=point_size)
 
     # Mesh overlay
     if mesh is not None:
@@ -353,23 +350,25 @@ def _render_roi_context(
 
 def render_roi_context_2d(
     points: np.ndarray, roi: ROI, save_dir: Path,
-    max_points: int = 500_000, seed: int = 42,
     colors: np.ndarray | None = None, filename: str | None = None,
     mesh: pv.StructuredGrid | None = None,
     z_range: tuple[float, float] | None = None,
+    point_size: float = 2.0,
 ) -> None:
     """Show interactive point cloud with 2D ROI rectangle overlay on XY plane."""
-    _render_roi_context(points, roi, save_dir, mode="2d", max_points=max_points,
-                        seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)
+    _render_roi_context(points, roi, save_dir, mode="2d",
+                        colors=colors, filename=filename, mesh=mesh, z_range=z_range,
+                        point_size=point_size)
 
 
 def render_roi_context_3d(
     points: np.ndarray, roi: ROI, save_dir: Path,
-    max_points: int = 500_000, seed: int = 42,
     colors: np.ndarray | None = None, filename: str | None = None,
     mesh: pv.StructuredGrid | None = None,
     z_range: tuple[float, float] | None = None,
+    point_size: float = 2.0,
 ) -> None:
     """Show interactive point cloud with 3D ROI wireframe box overlay."""
-    _render_roi_context(points, roi, save_dir, mode="3d", max_points=max_points,
-                        seed=seed, colors=colors, filename=filename, mesh=mesh, z_range=z_range)
+    _render_roi_context(points, roi, save_dir, mode="3d",
+                        colors=colors, filename=filename, mesh=mesh, z_range=z_range,
+                        point_size=point_size)
