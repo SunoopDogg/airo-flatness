@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pyvista as pv
 
-from figure.roi_selector import filter_points_by_roi
+from figure.roi_selector import QuadROI, filter_points_by_roi
 from utils import subsample_points, to_rgba
 
 ROI = tuple[float, float, float, float]
@@ -89,38 +90,43 @@ def _build_dashed_segments(
     return np.array(points), lines
 
 
-def _build_dashed_rectangle_2d(
-    roi: ROI,
-    z: float,
+def _assemble_dashed_polydata(
+    verts: np.ndarray,
+    edges: list[tuple[int, int]],
 ) -> pv.PolyData:
-    """Build a dashed 2D quadrilateral outline on the XY plane at given Z.
+    """Assemble dashed line segments along edges into a single PolyData.
 
     Args:
-        roi: (x_min, x_max, y_min, y_max) tuple.
-        z: Z coordinate for the rectangle.
+        verts: (M, 3) vertex array.
+        edges: list of (i, j) index pairs into verts.
 
     Returns:
-        PyVista PolyData with dashed line cells forming a quadrilateral.
+        PyVista PolyData with dashed line cells.
     """
-    x_min, x_max, y_min, y_max = roi
-    corners_2d = np.array([
-        [x_min, y_min],
-        [x_max, y_min],
-        [x_max, y_max],
-        [x_min, y_max],
-    ])
-    corners = np.column_stack([corners_2d, np.full(len(corners_2d), z)])
-    all_points = []
-    all_lines = []
-    edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    all_points: list[np.ndarray] = []
+    all_lines: list[list[int]] = []
     for i0, i1 in edges:
-        pts, lines = _build_dashed_segments(corners[i0], corners[i1])
+        pts, lines = _build_dashed_segments(verts[i0], verts[i1])
         offset = len(all_points)
         all_points.extend(pts)
         for ln in lines:
             all_lines.append([2, ln[1] + offset, ln[2] + offset])
-    all_points = np.array(all_points)
-    return pv.PolyData(all_points, lines=np.array(all_lines).ravel())
+    return pv.PolyData(np.array(all_points), lines=np.array(all_lines).ravel())
+
+
+def _build_dashed_rectangle_2d(
+    roi: ROI,
+    z: float,
+) -> pv.PolyData:
+    """Build a dashed 2D quadrilateral outline on the XY plane at given Z."""
+    x_min, x_max, y_min, y_max = roi
+    corners_2d = np.array([
+        [x_min, y_min], [x_max, y_min],
+        [x_max, y_max], [x_min, y_max],
+    ])
+    verts = np.column_stack([corners_2d, np.full(4, z)])
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    return _assemble_dashed_polydata(verts, edges)
 
 
 def _build_dashed_box_3d(
@@ -128,22 +134,11 @@ def _build_dashed_box_3d(
     z_min: float,
     z_max: float,
 ) -> pv.PolyData:
-    """Build a dashed 3D wireframe box.
-
-    Args:
-        roi: (x_min, x_max, y_min, y_max) tuple.
-        z_min: bottom Z coordinate.
-        z_max: top Z coordinate.
-
-    Returns:
-        PyVista PolyData with dashed line cells forming a box.
-    """
+    """Build a dashed 3D wireframe box."""
     x_min, x_max, y_min, y_max = roi
     corners_2d = np.array([
-        [x_min, y_min],
-        [x_max, y_min],
-        [x_max, y_max],
-        [x_min, y_max],
+        [x_min, y_min], [x_max, y_min],
+        [x_max, y_max], [x_min, y_max],
     ])
     bottom = np.column_stack([corners_2d, np.full(4, z_min)])
     top = np.column_stack([corners_2d, np.full(4, z_max)])
@@ -153,16 +148,7 @@ def _build_dashed_box_3d(
         (4, 5), (5, 6), (6, 7), (7, 4),
         (0, 4), (1, 5), (2, 6), (3, 7),
     ]
-    all_points = []
-    all_lines = []
-    for i0, i1 in edges:
-        pts, lines = _build_dashed_segments(verts[i0], verts[i1])
-        offset = len(all_points)
-        all_points.extend(pts)
-        for ln in lines:
-            all_lines.append([2, ln[1] + offset, ln[2] + offset])
-    all_points = np.array(all_points)
-    return pv.PolyData(all_points, lines=np.array(all_lines).ravel())
+    return _assemble_dashed_polydata(verts, edges)
 
 
 ROI_ZOOM = 2.0
@@ -273,10 +259,10 @@ def _bind_screenshot_key(
 
 def _render_roi_context(
     points: np.ndarray,
-    roi,
+    roi: QuadROI | ROI,
     save_dir: Path,
     *,
-    mode: str,  # "2d" | "3d"
+    mode: Literal["2d", "3d"],
     max_points: int,
     seed: int,
     colors: np.ndarray | None,
@@ -285,8 +271,6 @@ def _render_roi_context(
     z_range: tuple[float, float] | None,
 ) -> None:
     """Shared implementation for 2D and 3D ROI context interactive viewing."""
-    # Convert QuadROI to axis-aligned tuple for dashed shape builders
-    from figure.roi_selector import QuadROI
     roi_bounds: ROI = roi.to_axis_aligned() if isinstance(roi, QuadROI) else roi
 
     if colors is not None:
@@ -314,9 +298,9 @@ def _render_roi_context(
 
     # ROI shape
     if mode == "2d":
-        z_median = float(np.median(pts[:, 2]))
-        shape = _build_dashed_rectangle_2d(roi_bounds, z_median)
-    else:
+        z_mid = float(pts[:, 2].min() + pts[:, 2].max()) * 0.5
+        shape = _build_dashed_rectangle_2d(roi_bounds, z_mid)
+    elif mode == "3d":
         if z_range is not None:
             z_min, z_max = float(z_range[0]), float(z_range[1])
         else:
@@ -336,6 +320,8 @@ def _render_roi_context(
                 z_min = float(pts[:, 2].min())
                 z_max = float(pts[:, 2].max())
         shape = _build_dashed_box_3d(roi_bounds, z_min, z_max)
+    else:
+        raise ValueError(f"Invalid mode: {mode!r}, expected '2d' or '3d'")
 
     plotter.add_mesh(shape, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
 
