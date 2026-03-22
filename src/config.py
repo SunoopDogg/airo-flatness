@@ -15,7 +15,7 @@ class Config:
 
     # Downsampling
     downsampling_enabled: bool = True
-    downsampling_voxel_size: float = 0.0005
+    downsampling_voxel_size: float = 0.0001
     gpu_chunk_size: int = 20_000_000
     downsample_cache_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "downsample")
 
