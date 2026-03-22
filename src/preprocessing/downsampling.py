@@ -25,15 +25,17 @@ class VoxelAccumulation:
     """Intermediate accumulation state for voxel downsampling.
 
     Stores *sums* (not averages) so that chunks can be merged correctly
-    via weighted combination.
+    via weighted combination.  Classification is stored as per-voxel
+    histograms (O(V*C)) instead of raw values (O(N)) to keep GPU memory
+    bounded during incremental merges.
     """
     coord_sums: cp.ndarray       # (V, 3) float32 — sum of coordinates per voxel
     color_sums: cp.ndarray       # (V, 3) float32 — sum of colors per voxel
     intensity_sums: cp.ndarray   # (V,)   float32 — sum of intensity per voxel
     counts: cp.ndarray           # (V,)   float32 — number of points per voxel
     voxel_keys: cp.ndarray       # (V,)   int64   — unique linear voxel key
-    classification_vals: cp.ndarray  # (N,)   float32 — raw classification values
-    classification_inv: cp.ndarray   # (N,)   int64   — maps each raw value to its voxel index
+    class_labels: cp.ndarray     # (C,)   float32 — unique classification values
+    class_counts: cp.ndarray     # (V, C) float32 — per-voxel count for each class
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +97,8 @@ def _accumulate_voxel_chunk(
             intensity_sums=cp.empty(0, dtype=cp.float32),
             counts=cp.empty(0, dtype=cp.float32),
             voxel_keys=cp.empty(0, dtype=cp.int64),
-            classification_vals=cp.empty(0, dtype=cp.float32),
-            classification_inv=cp.empty(0, dtype=cp.int64),
+            class_labels=cp.empty(0, dtype=cp.float32),
+            class_counts=cp.empty((0, 0), dtype=cp.float32),
         )
 
     # Compute per-point voxel keys using absolute coordinates
@@ -125,73 +127,61 @@ def _accumulate_voxel_chunk(
     counts = cp.zeros(n_voxels, dtype=cp.float32)
     cp.add.at(counts, inverse, cp.ones(len(points), dtype=cp.float32))
 
-    # --- Classification (raw values + inverse for later mode) ---
+    # --- Classification histogram (per-voxel counts per class) ---
+    unique_cls = cp.unique(classification)
+    n_cls = len(unique_cls)
+    class_counts = cp.zeros((n_voxels, n_cls), dtype=cp.float32)
+    for ci in range(n_cls):
+        mask = (classification == unique_cls[ci]).astype(cp.float32)
+        cp.add.at(class_counts[:, ci], inverse, mask)
+
     return VoxelAccumulation(
         coord_sums=coord_sums,
         color_sums=color_sums,
         intensity_sums=intensity_sums,
         counts=counts,
         voxel_keys=unique_keys,
-        classification_vals=classification.copy(),
-        classification_inv=inverse.astype(cp.int64),
+        class_labels=unique_cls.astype(cp.float32),
+        class_counts=class_counts,
     )
 
 
 # ---------------------------------------------------------------------------
-# Merge multiple accumulations
+# Merge two accumulations
 # ---------------------------------------------------------------------------
 
-def _merge_accumulations(accums: list[VoxelAccumulation]) -> VoxelAccumulation:
-    """Merge multiple :class:`VoxelAccumulation` objects.
-
-    Voxels that appear in more than one chunk are combined by adding their
-    sums and counts.  Classification raw values are re-indexed so that the
-    inverse mapping remains consistent with the merged voxel key array.
-    """
-    if len(accums) == 1:
-        return accums[0]
-
-    # Concatenate all voxel keys from every accumulation
-    all_keys = cp.concatenate([a.voxel_keys for a in accums])
+def _merge_two(a: VoxelAccumulation, b: VoxelAccumulation) -> VoxelAccumulation:
+    """Merge exactly two :class:`VoxelAccumulation` objects."""
+    all_keys = cp.concatenate([a.voxel_keys, b.voxel_keys])
     merged_keys, key_inverse = cp.unique(all_keys, return_inverse=True)
     n_merged = len(merged_keys)
 
-    # Build coordinate-sum, color-sum, intensity-sum, counts for merged set
     coord_sums = cp.zeros((n_merged, 3), dtype=cp.float32)
     color_sums = cp.zeros((n_merged, 3), dtype=cp.float32)
     intensity_sums = cp.zeros(n_merged, dtype=cp.float32)
     counts = cp.zeros(n_merged, dtype=cp.float32)
 
-    offset = 0  # running offset into key_inverse
-    cls_vals_list = []
-    cls_inv_list = []
+    # Merge class histograms — union of class labels from both sides
+    all_labels = cp.unique(cp.concatenate([a.class_labels, b.class_labels]))
+    n_cls_merged = len(all_labels)
+    class_counts = cp.zeros((n_merged, n_cls_merged), dtype=cp.float32)
 
-    for a in accums:
-        n_v = len(a.voxel_keys)
-        # Mapping from this accumulation's local voxel indices → merged indices
+    offset = 0
+    for acc in (a, b):
+        n_v = len(acc.voxel_keys)
         local_to_merged = key_inverse[offset:offset + n_v]
         offset += n_v
 
-        # Scatter-add sums
         for ax in range(3):
-            cp.add.at(coord_sums[:, ax], local_to_merged, a.coord_sums[:, ax])
-            cp.add.at(color_sums[:, ax], local_to_merged, a.color_sums[:, ax])
-        cp.add.at(intensity_sums, local_to_merged, a.intensity_sums)
-        cp.add.at(counts, local_to_merged, a.counts)
+            cp.add.at(coord_sums[:, ax], local_to_merged, acc.coord_sums[:, ax])
+            cp.add.at(color_sums[:, ax], local_to_merged, acc.color_sums[:, ax])
+        cp.add.at(intensity_sums, local_to_merged, acc.intensity_sums)
+        cp.add.at(counts, local_to_merged, acc.counts)
 
-        # Remap classification inverse indices through the merge mapping
-        if len(a.classification_inv) > 0:
-            remapped_inv = local_to_merged[a.classification_inv]
-            cls_vals_list.append(a.classification_vals)
-            cls_inv_list.append(remapped_inv)
-
-    # Concatenate classification data
-    if cls_vals_list:
-        classification_vals = cp.concatenate(cls_vals_list)
-        classification_inv = cp.concatenate(cls_inv_list)
-    else:
-        classification_vals = cp.empty(0, dtype=cp.float32)
-        classification_inv = cp.empty(0, dtype=cp.int64)
+        # Map each class column from acc to the merged columns
+        for ci in range(len(acc.class_labels)):
+            merged_ci = int(cp.searchsorted(all_labels, acc.class_labels[ci]))
+            cp.add.at(class_counts[:, merged_ci], local_to_merged, acc.class_counts[:, ci])
 
     return VoxelAccumulation(
         coord_sums=coord_sums,
@@ -199,50 +189,32 @@ def _merge_accumulations(accums: list[VoxelAccumulation]) -> VoxelAccumulation:
         intensity_sums=intensity_sums,
         counts=counts,
         voxel_keys=merged_keys,
-        classification_vals=classification_vals,
-        classification_inv=classification_inv,
+        class_labels=all_labels,
+        class_counts=class_counts,
     )
 
 
-# ---------------------------------------------------------------------------
-# GPU mode (majority vote) for classification
-# ---------------------------------------------------------------------------
+def _merge_accumulations(accums: list[VoxelAccumulation]) -> VoxelAccumulation:
+    """Merge multiple :class:`VoxelAccumulation` objects via pairwise reduction.
 
-def _compute_mode_gpu(
-    values: cp.ndarray,
-    inverse: cp.ndarray,
-    n_voxels: int,
-) -> cp.ndarray:
-    """GPU-based mode computation for classification per voxel.
-
-    For each unique classification value, count occurrences per voxel via
-    ``scatter_add``, then keep the value with the highest count per voxel.
-
-    Returns:
-        Array of shape (n_voxels,) with the mode classification per voxel.
+    Uses a tree-reduction pattern (merge pairs, then merge results) to keep
+    peak GPU memory lower than concatenating all keys at once.
     """
-    if len(values) == 0:
-        return cp.empty(0, dtype=cp.float32)
+    if len(accums) == 1:
+        return accums[0]
 
-    unique_cls = cp.unique(values)
+    while len(accums) > 1:
+        next_level = []
+        for i in range(0, len(accums), 2):
+            if i + 1 < len(accums):
+                merged = _merge_two(accums[i], accums[i + 1])
+            else:
+                merged = accums[i]
+            next_level.append(merged)
+        accums = next_level
+        cp.get_default_memory_pool().free_all_blocks()
 
-    # best_count[v] = highest count seen so far for voxel v
-    best_count = cp.zeros(n_voxels, dtype=cp.float32)
-    # best_val[v] = classification value corresponding to best_count[v]
-    best_val = cp.zeros(n_voxels, dtype=cp.float32)
-
-    for cls_val in unique_cls:
-        # Mask: 1 where classification matches cls_val, 0 otherwise
-        mask = (values == cls_val).astype(cp.float32)
-        # Count occurrences of this class per voxel
-        cls_count = cp.zeros(n_voxels, dtype=cp.float32)
-        cp.add.at(cls_count, inverse, mask)
-        # Update best where this class has higher count
-        better = cls_count > best_count
-        best_count = cp.where(better, cls_count, best_count)
-        best_val = cp.where(better, float(cls_val), best_val)
-
-    return best_val
+    return accums[0]
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +226,8 @@ def _finalize_voxels(
 ) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray, cp.ndarray]:
     """Convert accumulated sums to per-voxel averages.
 
-    Classification uses GPU-based mode (majority vote) instead of averaging.
+    Classification uses argmax over the per-voxel class histogram
+    (majority vote).
 
     Returns:
         (points, colors, intensity, classification) as CuPy arrays.
@@ -274,11 +247,11 @@ def _finalize_voxels(
     avg_cols = (accum.color_sums / counts_col).clip(0, 255).astype(cp.uint8)
     avg_int = accum.intensity_sums / accum.counts
 
-    avg_cls = _compute_mode_gpu(
-        accum.classification_vals,
-        accum.classification_inv,
-        n_voxels,
-    )
+    if len(accum.class_labels) > 0:
+        best_idx = cp.argmax(accum.class_counts, axis=1)
+        avg_cls = accum.class_labels[best_idx]
+    else:
+        avg_cls = cp.zeros(n_voxels, dtype=cp.float32)
 
     return avg_pts, avg_cols, avg_int, avg_cls
 
@@ -301,7 +274,7 @@ def downsample_voxel_grid_gpu(
 
     1. Split into chunks of *gpu_chunk_size* points.
     2. Accumulate sums+counts per chunk using absolute voxel keys.
-    3. Merge all accumulations.
+    3. Merge all accumulations incrementally.
     4. Finalize (divide sums by counts, compute mode for classification).
 
     Returns:
@@ -325,26 +298,40 @@ def downsample_voxel_grid_gpu(
         )
         return _finalize_voxels(accum)
 
-    # Chunked processing
+    # Chunked processing — move input to CPU to free GPU memory,
+    # then stream chunks and merge incrementally.
+    import numpy as np_cpu
+    points_cpu = cp.asnumpy(points)
+    colors_cpu = cp.asnumpy(colors)
+    intensity_cpu = cp.asnumpy(intensity)
+    classification_cpu = cp.asnumpy(classification)
+    del points, colors, intensity, classification
+    cp.get_default_memory_pool().free_all_blocks()
+
     n_chunks = (n_points + gpu_chunk_size - 1) // gpu_chunk_size
-    accums = []
+    merged = None
 
     for i in range(n_chunks):
         start = i * gpu_chunk_size
         end = min(start + gpu_chunk_size, n_points)
+
         accum = _accumulate_voxel_chunk(
-            points[start:end],
-            colors[start:end],
-            intensity[start:end],
-            classification[start:end],
+            cp.asarray(points_cpu[start:end]),
+            cp.asarray(colors_cpu[start:end]),
+            cp.asarray(intensity_cpu[start:end]),
+            cp.asarray(classification_cpu[start:end]),
             voxel_size,
         )
-        accums.append(accum)
 
-    # Free GPU memory
-    cp.get_default_memory_pool().free_all_blocks()
+        if merged is None:
+            merged = accum
+        else:
+            merged = _merge_two(merged, accum)
+            del accum
 
-    merged = _merge_accumulations(accums)
+        cp.get_default_memory_pool().free_all_blocks()
+
+    del points_cpu, colors_cpu, intensity_cpu, classification_cpu
     return _finalize_voxels(merged)
 
 
@@ -378,24 +365,26 @@ def downsample_gpu(
 
     start_time = time.time()
 
-    try:
-        result = downsample_voxel_grid_gpu(
-            points, colors, intensity, classification,
-            voxel_size, gpu_chunk_size,
-        )
-    except cp.cuda.memory.OutOfMemoryError:
-        print("    GPU OOM during downsampling — halving chunk size and retrying")
+    chunk = gpu_chunk_size
+    max_retries = 4
+    result = None
+    for attempt in range(max_retries + 1):
         try:
             result = downsample_voxel_grid_gpu(
                 points, colors, intensity, classification,
-                voxel_size, gpu_chunk_size // 2,
+                voxel_size, chunk,
             )
+            break
         except cp.cuda.memory.OutOfMemoryError:
-            raise RuntimeError(
-                f"GPU out of memory during downsampling even with reduced chunk size. "
-                f"Try reducing gpu_chunk_size further (tried: {gpu_chunk_size // 2:,}). "
-                f"Set Config.gpu_chunk_size to a smaller value."
-            )
+            cp.get_default_memory_pool().free_all_blocks()
+            if attempt == max_retries:
+                raise RuntimeError(
+                    f"GPU out of memory during downsampling after {max_retries} retries. "
+                    f"Final chunk size: {chunk:,}. "
+                    f"Set Config.gpu_chunk_size to a smaller value."
+                )
+            chunk = chunk // 2
+            print(f"    GPU OOM — reducing chunk size to {chunk:,} (attempt {attempt + 2}/{max_retries + 1})")
 
     r_pts, r_cols, r_int, r_cls = result
 
