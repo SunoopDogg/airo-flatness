@@ -80,56 +80,87 @@ def load_and_downsample(
     elapsed = time.time() - start_time
     print(f"\n\nLoaded {data['sampled_vertices']:,} points in {elapsed:.1f}s")
 
-    # GPU downsample
-    print("\nGPU voxel downsampling...")
-    try:
-        import cupy as cp
-    except ImportError:
-        raise RuntimeError(
-            "CuPy is required for GPU voxel downsampling but is not installed. "
-            "Install it with: pip install cupy-cuda12x\n"
-            "Or disable downsampling: Config(downsampling_enabled=False)"
+    # GPU downsample (with CPU random-sampling fallback)
+    from figure.detrend import _CUPY_COMPUTE_OK
+
+    gpu_available = _CUPY_COMPUTE_OK
+    if gpu_available:
+        try:
+            import cupy as cp
+        except ImportError:
+            gpu_available = False
+
+    if not gpu_available:
+        print("\nGPU not available — falling back to random sampling...")
+        n = len(data["points"])
+        max_pts = config.max_points
+        if n > max_pts:
+            rng = np.random.default_rng(config.random_seed)
+            idx = rng.choice(n, size=max_pts, replace=False)
+            idx.sort()
+            data["points"] = data["points"][idx]
+            if data["colors"] is not None:
+                data["colors"] = data["colors"][idx]
+            if data["intensity"] is not None:
+                data["intensity"] = data["intensity"][idx]
+            if data["classification"] is not None:
+                data["classification"] = data["classification"][idx]
+            data["sampled_vertices"] = max_pts
+        print(f"  Downsampled to {data['sampled_vertices']:,} points (random)")
+        if gpu:
+            data["points"] = data["points"]  # already numpy
+        result = {
+            "points": data["points"],
+            "colors": data["colors"],
+            "intensity": data["intensity"],
+            "classification": data["classification"],
+            "total_vertices": total,
+            "sampled_vertices": data["sampled_vertices"],
+        }
+    else:
+        print("\nGPU voxel downsampling...")
+        from preprocessing.downsampling import downsample_gpu
+
+        has_intensity = data["intensity"] is not None
+        has_classification = data["classification"] is not None
+
+        gpu_points = cp.asarray(data["points"])
+        gpu_colors = (
+            cp.asarray((data["colors"] * 255).clip(0, 255).astype(np.uint8))
+            if data["colors"] is not None
+            else cp.zeros((len(data["points"]), 3), dtype=cp.uint8)
+        )
+        gpu_intensity = (
+            cp.asarray(data["intensity"]) if has_intensity
+            else cp.zeros(len(data["points"]), dtype=cp.float32)
+        )
+        gpu_classification = (
+            cp.asarray(data["classification"]) if has_classification
+            else cp.zeros(len(data["points"]), dtype=cp.float32)
         )
 
-    from preprocessing.downsampling import downsample_gpu
+        ds_pts, ds_cols, ds_int, ds_cls = downsample_gpu(
+            gpu_points, gpu_colors, gpu_intensity, gpu_classification,
+            voxel_size=config.downsampling_voxel_size,
+            gpu_chunk_size=config.gpu_chunk_size,
+        )
 
-    has_intensity = data["intensity"] is not None
-    has_classification = data["classification"] is not None
+        # GPU -> CPU (or keep on GPU if gpu=True)
+        result_points = ds_pts if gpu else ds_pts.get()
+        result = {
+            "points": result_points,
+            "colors": ds_cols.get().astype(np.float32) / 255.0,
+            "intensity": ds_int.get() if has_intensity else None,
+            "classification": ds_cls.get() if has_classification else None,
+            "total_vertices": total,
+            "sampled_vertices": len(ds_pts),
+        }
 
-    gpu_points = cp.asarray(data["points"])
-    gpu_colors = (
-        cp.asarray((data["colors"] * 255).clip(0, 255).astype(np.uint8))
-        if data["colors"] is not None
-        else cp.zeros((len(data["points"]), 3), dtype=cp.uint8)
-    )
-    gpu_intensity = (
-        cp.asarray(data["intensity"]) if has_intensity
-        else cp.zeros(len(data["points"]), dtype=cp.float32)
-    )
-    gpu_classification = (
-        cp.asarray(data["classification"]) if has_classification
-        else cp.zeros(len(data["points"]), dtype=cp.float32)
-    )
-
-    ds_pts, ds_cols, ds_int, ds_cls = downsample_gpu(
-        gpu_points, gpu_colors, gpu_intensity, gpu_classification,
-        voxel_size=config.downsampling_voxel_size,
-        gpu_chunk_size=config.gpu_chunk_size,
-    )
-
-    # GPU -> CPU (or keep on GPU if gpu=True)
-    result_points = ds_pts if gpu else ds_pts.get()
-    result = {
-        "points": result_points,
-        "colors": ds_cols.get().astype(np.float32) / 255.0,
-        "intensity": ds_int.get() if has_intensity else None,
-        "classification": ds_cls.get() if has_classification else None,
-        "total_vertices": total,
-        "sampled_vertices": len(ds_pts),
-    }
-
-    # Save cache (always use CPU points)
-    cache_points = ds_pts.get() if gpu else result["points"]
+    # Save cache (always use CPU numpy points)
+    if gpu_available and gpu:
+        cache_points = ds_pts.get()
+    else:
+        cache_points = result["points"]
     try:
         print(f"Saving cache to: {cache_path}")
         save_cache(
