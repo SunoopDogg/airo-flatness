@@ -1,4 +1,4 @@
-"""Tests for ROI context view rendering."""
+"""Tests for ROI context view — interactive PyVista viewer."""
 
 import json
 import numpy as np
@@ -9,6 +9,8 @@ from unittest.mock import patch, MagicMock, ANY
 from figure.roi_context import (
     _build_dashed_rectangle_2d,
     _build_dashed_box_3d,
+    _create_plotter,
+    _bind_screenshot_key,
     render_roi_context_2d,
     render_roi_context_3d,
 )
@@ -44,9 +46,88 @@ class TestBuildDashedBox3d:
         assert box.n_lines == 360
 
 
-class TestRenderRoiContext2d:
-    def test_calls_plotter_offscreen(self, tmp_path):
-        """Should create off-screen plotter and take screenshot."""
+class TestCreatePlotter:
+    def test_creates_interactive_plotter(self):
+        """Should create an on-screen plotter with title (not off-screen)."""
+        pts = np.random.default_rng(42).uniform(0, 10, (100, 3))
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            _create_plotter(pts, title="Test Title")
+
+            mock_pv.Plotter.assert_called_once_with(title="Test Title")
+            mock_plotter.set_background.assert_called_once_with("white")
+
+    def test_adds_point_cloud_with_z_scalars(self):
+        """Should add point cloud with viridis Z colormap when no colors."""
+        pts = np.random.default_rng(42).uniform(0, 10, (100, 3))
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            _create_plotter(pts)
+
+            _, kwargs = mock_plotter.add_mesh.call_args
+            assert kwargs.get("cmap") == "viridis"
+
+
+class TestBindScreenshotKey:
+    def test_s_key_saves_png_and_json(self, tmp_path):
+        """Pressing S should save PNG screenshot and camera JSON."""
+        mock_plotter = MagicMock()
+        mock_plotter.camera.position = (1.0, 2.0, 3.0)
+        mock_plotter.camera.focal_point = (0.0, 0.0, 0.0)
+        mock_plotter.camera.up = (0.0, 0.0, 1.0)
+
+        _bind_screenshot_key(mock_plotter, tmp_path, "roi_context_2d_rgb.png")
+
+        # Extract the handler function that was registered
+        mock_plotter.add_key_event.assert_called_once_with("s", ANY)
+        handler = mock_plotter.add_key_event.call_args[0][1]
+
+        # Invoke the handler
+        handler()
+
+        # Verify screenshot was taken
+        mock_plotter.screenshot.assert_called_once_with(
+            str(tmp_path / "roi_context_2d_rgb.png")
+        )
+
+        # Verify camera JSON was saved
+        json_path = tmp_path / "roi_context_2d_rgb_camera.json"
+        assert json_path.exists()
+        cam = json.loads(json_path.read_text())
+        assert cam["position"] == [1.0, 2.0, 3.0]
+        assert cam["focal_point"] == [0.0, 0.0, 0.0]
+        assert cam["view_up"] == [0.0, 0.0, 1.0]
+
+    def test_s_key_overwrites_on_repeat(self, tmp_path):
+        """Pressing S twice should overwrite the same files."""
+        mock_plotter = MagicMock()
+        mock_plotter.camera.position = (1.0, 2.0, 3.0)
+        mock_plotter.camera.focal_point = (0.0, 0.0, 0.0)
+        mock_plotter.camera.up = (0.0, 0.0, 1.0)
+
+        _bind_screenshot_key(mock_plotter, tmp_path, "test.png")
+        handler = mock_plotter.add_key_event.call_args[0][1]
+
+        handler()
+        handler()
+
+        # Screenshot called twice (overwrite)
+        assert mock_plotter.screenshot.call_count == 2
+
+        # JSON exists with latest values
+        json_path = tmp_path / "test_camera.json"
+        assert json_path.exists()
+
+
+class TestRenderInteractive2d:
+    def test_shows_interactive_window(self, tmp_path):
+        """Should call plotter.show() for interactive display, not auto-screenshot."""
         rng = np.random.default_rng(42)
         points = rng.uniform(0, 10, (500, 3))
         roi = (2.0, 4.0, 3.0, 6.0)
@@ -58,34 +139,84 @@ class TestRenderRoiContext2d:
 
             render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
 
-            mock_pv.Plotter.assert_called_once_with(off_screen=True)
-            mock_plotter.set_background.assert_called_once_with("white")
-            mock_plotter.view_isometric.assert_called_once()
-            mock_plotter.screenshot.assert_called_once()
+            # Should be interactive (title kwarg, not off_screen)
+            call_kwargs = mock_pv.Plotter.call_args[1]
+            assert "title" in call_kwargs
+            assert call_kwargs.get("off_screen") is not True
+            # Should show interactively and close after
+            mock_plotter.show.assert_called_once()
             mock_plotter.close.assert_called_once()
+            # Should NOT auto-screenshot
+            mock_plotter.screenshot.assert_not_called()
 
-
-class TestRenderRoiContext3d:
-    def test_calls_plotter_offscreen(self, tmp_path):
-        """Should create off-screen plotter and take screenshot."""
+    def test_title_contains_2d(self, tmp_path):
+        """Window title should indicate 2D mode."""
         rng = np.random.default_rng(42)
         points = rng.uniform(0, 10, (500, 3))
         roi = (2.0, 4.0, 3.0, 6.0)
 
-        with patch("figure.roi_context.pv") as mock_pv, \
-             patch("figure.roi_context.filter_points_by_roi", return_value=points[:10]):
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
+
+            title = mock_pv.Plotter.call_args[1].get("title", "")
+            assert "2D" in title
+
+    def test_binds_s_key(self, tmp_path):
+        """Should bind S key for screenshot capture."""
+        rng = np.random.default_rng(42)
+        points = rng.uniform(0, 10, (500, 3))
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42)
+
+            mock_plotter.add_key_event.assert_called_once_with("s", ANY)
+
+
+class TestRenderInteractive3d:
+    def test_shows_interactive_window(self, tmp_path):
+        """Should call plotter.show() for interactive 3D display."""
+        rng = np.random.default_rng(42)
+        points = rng.uniform(0, 10, (500, 3))
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
             mock_plotter = MagicMock()
             mock_pv.Plotter.return_value = mock_plotter
             mock_pv.PolyData = pv.PolyData
 
             render_roi_context_3d(points, roi, tmp_path, max_points=500, seed=42)
 
-            mock_pv.Plotter.assert_called_once_with(off_screen=True)
-            mock_plotter.screenshot.assert_called_once()
+            mock_plotter.show.assert_called_once()
             mock_plotter.close.assert_called_once()
+            mock_plotter.screenshot.assert_not_called()
+
+    def test_title_contains_3d(self, tmp_path):
+        """Window title should indicate 3D mode."""
+        rng = np.random.default_rng(42)
+        points = rng.uniform(0, 10, (500, 3))
+        roi = (2.0, 4.0, 3.0, 6.0)
+
+        with patch("figure.roi_context.pv") as mock_pv:
+            mock_plotter = MagicMock()
+            mock_pv.Plotter.return_value = mock_plotter
+            mock_pv.PolyData = pv.PolyData
+
+            render_roi_context_3d(points, roi, tmp_path, max_points=500, seed=42)
+
+            title = mock_pv.Plotter.call_args[1].get("title", "")
+            assert "3D" in title
 
 
-class TestRenderRoiContextRgb:
+class TestRenderInteractiveRgb:
     def test_2d_rgb_uses_rgba_scalars(self, tmp_path):
         """When colors provided, add_mesh should use rgba=True."""
         rng = np.random.default_rng(42)
@@ -105,8 +236,8 @@ class TestRenderRoiContextRgb:
             assert kwargs.get("rgba") is True
             assert kwargs.get("scalars") == "RGBA"
 
-    def test_2d_rgb_auto_filename(self, tmp_path):
-        """When colors provided, screenshot filename should include _rgb suffix."""
+    def test_2d_rgb_auto_filename_in_s_key(self, tmp_path):
+        """When colors provided, S-key handler should use filename with _rgb suffix."""
         rng = np.random.default_rng(42)
         points = rng.uniform(0, 10, (500, 3))
         colors = rng.uniform(0, 1, (500, 3)).astype(np.float32)
@@ -119,6 +250,11 @@ class TestRenderRoiContextRgb:
 
             render_roi_context_2d(points, roi, tmp_path, max_points=500, seed=42, colors=colors)
 
+            # Extract and call the S-key handler
+            handler = mock_plotter.add_key_event.call_args[0][1]
+            handler()
+
+            # Screenshot should use the auto-generated _rgb filename
             mock_plotter.screenshot.assert_called_once_with(
                 str(tmp_path / "roi_context_2d_rgb.png")
             )
