@@ -3,7 +3,7 @@
 import time
 
 from config import Config
-from utils import create_progress_bar, select_file
+from utils import create_progress_bar, select_downsampled_file, select_file, select_source
 
 
 def main() -> None:
@@ -11,30 +11,33 @@ def main() -> None:
     from viewer import visualizer
     from extractor import extract_floor
     from chart import generate_all_charts
+    from preprocessing.pipeline import load_and_downsample, load_from_downsampled_cache
 
     cfg = Config()
-    filepath = select_file(cfg.data_dir)
 
-    # Header
-    header = ply_loader.read_ply_header(filepath)
-    total = header["vertex_count"]
-    print(f"\nFile: {filepath.name}")
-    print(f"Total vertices: {total:,}")
-    print(f"Sampling: {cfg.max_points:,} points")
-    print()
+    # Source selection
+    source = select_source(cfg.downsample_cache_dir)
 
-    # Load
-    start_time = time.time()
-    progress = create_progress_bar(label="Sampling")
-    data = ply_loader.load_ply_sampled(
-        filepath,
-        max_points=cfg.max_points,
-        progress_callback=progress,
-        seed=cfg.random_seed,
-        chunk_size=cfg.chunk_size,
-    )
-    elapsed = time.time() - start_time
-    print(f"\n\nLoaded {data['sampled_vertices']:,} points in {elapsed:.1f}s")
+    if source == "original":
+        filepath = select_file(cfg.data_dir)
+
+        # Header
+        header = ply_loader.read_ply_header(filepath)
+        total = header["vertex_count"]
+        print(f"\nFile: {filepath.name}")
+        print(f"Total vertices: {total:,}")
+
+        # Load + downsample
+        progress = create_progress_bar(label="Loading")
+        data = load_and_downsample(filepath, cfg, progress_callback=progress)
+    else:
+        npz_path = select_downsampled_file(cfg.downsample_cache_dir)
+        data = load_from_downsampled_cache(npz_path)
+        filepath = npz_path
+        print(f"\nFile: {npz_path.name}")
+        print(f"Downsampled points: {data['sampled_vertices']:,}")
+
+    print(f"\nProcessing {data['sampled_vertices']:,} / {data['total_vertices']:,} points")
 
     # Floor extraction
     print("\nExtracting floor (3-stage: peak + Z-filter + intensity/color)...")

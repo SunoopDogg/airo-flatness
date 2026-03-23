@@ -13,6 +13,12 @@ class Config:
     random_seed: int = 42
     chunk_size: int = 1_000_000
 
+    # Downsampling
+    downsampling_enabled: bool = True
+    downsampling_voxel_size: float = 0.0001
+    gpu_chunk_size: int = 20_000_000
+    downsample_cache_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "downsample")
+
     # Floor extraction
     num_bins: int = 200
     width_multiplier: float = 2.5
@@ -54,6 +60,7 @@ class Config:
     # Figure tool
     fig_roi_subsample: int = 500_000
     fig_dpi: int = 300
+    fig_point_size: float = 2.0
     fig_heatmap_target_grid: int = 100
     fig_heatmap_min_points: int = 3
     fig_delaunay_max_points: int = 500_000

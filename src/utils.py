@@ -120,3 +120,68 @@ def select_file(data_dir: Path) -> Path:
             print(f"  Please enter a number between 1 and {len(ply_files)}")
         except (ValueError, EOFError):
             print("  Invalid input. Please enter a number.")
+
+
+def select_source(cache_dir: Path) -> str:
+    """Let user choose between original PLY and downsampled (cached) files.
+
+    Args:
+        cache_dir: directory containing .npz cache files.
+
+    Returns:
+        "original" or "downsampled".
+    """
+    if not cache_dir.is_dir() or not any(cache_dir.glob("*.npz")):
+        return "original"
+
+    print("\nSelect source type:")
+    print("  1) Original PLY")
+    print("  2) Downsampled (cached)")
+
+    while True:
+        try:
+            choice = input("\nSelect source number (1-2): ").strip()
+            if choice == "1":
+                return "original"
+            if choice == "2":
+                return "downsampled"
+            print("  Please enter 1 or 2.")
+        except (ValueError, EOFError):
+            print("  Invalid input. Please enter 1 or 2.")
+
+
+def select_downsampled_file(cache_dir: Path) -> Path:
+    """Display NPZ file list in cache_dir and let user choose interactively.
+
+    Args:
+        cache_dir: directory containing .npz cache files.
+
+    Returns:
+        Path to the selected NPZ file.
+    """
+    npz_files = sorted(cache_dir.glob("*.npz"))
+
+    if not npz_files:
+        print(f"Error: No .npz files found in {cache_dir}")
+        sys.exit(1)
+
+    if len(npz_files) == 1:
+        print(f"\nAuto-selected (only file): {npz_files[0].name}")
+        return npz_files[0]
+
+    print("\nAvailable downsampled files:")
+    print("-" * 50)
+    for i, f in enumerate(npz_files, 1):
+        size = format_size(f.stat().st_size)
+        print(f"  [{i}] {f.name:<30s} ({size})")
+    print("-" * 50)
+
+    while True:
+        try:
+            choice = input(f"\nSelect file number (1-{len(npz_files)}): ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(npz_files):
+                return npz_files[idx]
+            print(f"  Please enter a number between 1 and {len(npz_files)}")
+        except (ValueError, EOFError):
+            print("  Invalid input. Please enter a number.")
