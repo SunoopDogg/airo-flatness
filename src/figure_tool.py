@@ -127,7 +127,7 @@ def main() -> None:
     print("\nGenerating X-direction height profile...")
     x_centers, z_means = compute_height_profile(roi_points_gpu, cell_size)
     if len(x_centers) > 0:
-        plot_height_profile(x_centers, z_means, save_dir, dpi=cfg.fig_dpi, z_range=(z_min, z_max))
+        plot_height_profile(x_centers, z_means, save_dir, dpi=cfg.fig_dpi)
         print("  Saved: height_profile.png")
     else:
         print("  Warning: no valid bins for height profile.")
