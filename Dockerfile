@@ -1,33 +1,25 @@
-FROM python:3.14.2-slim-trixie
+FROM debian:trixie-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PATH="/root/.local/bin:$PATH"
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Update package lists
-RUN apt-get update
-
-# Core utilities
-RUN apt-get install -y --no-install-recommends \
+# System packages
+RUN apt update && apt install -y --no-install-recommends \
+        # Core utilities
+        ca-certificates \
         curl \
-        unzip
-
-# Git and Git LFS
-RUN apt-get install -y --no-install-recommends \
+        unzip \
+        # Git
         git \
-        git-lfs \
-    && git lfs install
-
-# GUI / Rendering libraries
-RUN apt-get install -y --no-install-recommends \
+        # GUI / Rendering libraries
         libgl1 \
         libgtk2.0-dev \
-        tk
+        tk \
+    && rm -rf /var/lib/apt/lists/*
 
 # uv installation
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Clean up
-RUN apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /root
+# nvm installation
+ENV NVM_DIR=/root/.nvm
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
+    && . "$NVM_DIR/nvm.sh"
