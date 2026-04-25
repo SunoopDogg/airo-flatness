@@ -19,11 +19,13 @@ SCALAR_BAR_ARGS = {
     "vertical": True,
     "position_x": 0.02,
     "position_y": 0.05,
-    "width": 0.05,
-    "height": 0.35,
+    "width": 0.14,
+    "height": 0.66,
+    "title_font_size": 42,
+    "label_font_size": 36,
 }
 
-AXES_WIDGET_VIEWPORT = (0.08, 0.0, 0.22, 0.2)  # (xmin, ymin, xmax, ymax) normalized
+AXES_WIDGET_VIEWPORT = (0.78, 0.0, 0.92, 0.2)  # (xmin, ymin, xmax, ymax) normalized
 
 
 def _clip_mesh_to_roi(
@@ -155,6 +157,51 @@ ROI_ZOOM = 2.0
 ROI_PAN_DOWN_RATIO = 0.6  # fraction of scene height to pan downward after zoom
 
 
+def _add_scalar_bar_background(plotter: pv.Plotter) -> None:
+    """Add fixed-size semi-transparent white background box behind the scalar bar."""
+    import vtkmodules.vtkRenderingCore as vtk_rc
+    from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
+    from vtkmodules.vtkCommonCore import vtkPoints
+
+    win_w, win_h = 1280, 720
+    pad = 8  # pixels
+    bg_height = 510  # pixels, fixed
+
+    x0 = SCALAR_BAR_ARGS["position_x"] * win_w - pad
+    y0 = SCALAR_BAR_ARGS["position_y"] * win_h - pad
+    x1 = x0 + SCALAR_BAR_ARGS["width"] * win_w + 2 * pad
+    y1 = y0 + bg_height
+
+    points = vtkPoints()
+    points.InsertNextPoint(x0, y0, 0)
+    points.InsertNextPoint(x1, y0, 0)
+    points.InsertNextPoint(x1, y1, 0)
+    points.InsertNextPoint(x0, y1, 0)
+
+    cells = vtkCellArray()
+    cells.InsertNextCell(4)
+    for i in range(4):
+        cells.InsertCellPoint(i)
+
+    poly = vtkPolyData()
+    poly.SetPoints(points)
+    poly.SetPolys(cells)
+
+    coord = vtk_rc.vtkCoordinate()
+    coord.SetCoordinateSystemToDisplay()
+
+    mapper = vtk_rc.vtkPolyDataMapper2D()
+    mapper.SetInputData(poly)
+    mapper.SetTransformCoordinate(coord)
+
+    actor = vtk_rc.vtkActor2D()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(1.0, 1.0, 1.0)
+    actor.GetProperty().SetOpacity(0.7)
+
+    plotter.renderer.AddActor2D(actor)
+
+
 def _add_roi_legend(plotter: pv.Plotter) -> None:
     """Add ROI legend text in upper-right corner with academic styling.
 
@@ -168,7 +215,8 @@ def _add_roi_legend(plotter: pv.Plotter) -> None:
 
     prop = actor.GetTextProperty()
     prop.SetFontFamilyToTimes()
-    prop.SetFontSize(20)
+    prop.SetBold(True)
+    prop.SetFontSize(40)
     prop.SetColor(*ROI_COLOR)
     prop.SetShadow(True)
     prop.SetBackgroundColor(1.0, 1.0, 1.0)
@@ -308,6 +356,7 @@ def _render_roi_context(
             )
             if z_range is not None:
                 mesh_kwargs["clim"] = [float(z_range[0]), float(z_range[1])]
+            _add_scalar_bar_background(plotter)
             plotter.add_mesh(clipped, **mesh_kwargs)
 
     # ROI shape
@@ -339,7 +388,7 @@ def _render_roi_context(
 
     plotter.add_mesh(shape, color=ROI_COLOR, line_width=ROI_LINE_WIDTH)
 
-    _add_roi_legend(plotter)
+    # _add_roi_legend(plotter)
     plotter.add_axes(viewport=AXES_WIDGET_VIEWPORT)
 
     # Initial camera: isometric + zoom + pan-down
